@@ -1,0 +1,28 @@
+# Copie este arquivo para config.toml para personalizar a máquina local.
+# config.toml fica de fora do Git. A URL abaixo é o documento de descoberta GBFS;
+# os demais endereços são lidos desse documento a cada ciclo.
+
+[fonte]
+url_descoberta = "https://riodejaneiro.publicbikesystem.net/customer/gbfs/v3.0/gbfs.json"
+idioma_nome = "pt"
+intervalo_coleta_segundos = 60
+intervalo_cadastro_segundos = 900
+timeout_segundos = 20
+tentativas_http = 3
+espera_inicial_segundos = 1
+
+[armazenamento]
+pasta_base = "data"
+pasta_logs = "logs"
+
+[qualidade]
+# O last_reported do Bike Rio avança em passos de cerca de três minutos.
+# O limite precisa ficar acima desse passo; lacunas maiores continuam sem delta.
+limite_lacuna_segundos = 900
+limite_dados_antigos_segundos = 3600
+limiar_intervencao_bicicletas = 10
+limiar_cobertura_percentual = 90
+limite_status_desatualizado_segundos = 600
+
+[interface]
+atualizacao_segundos = 60

@@ -1,0 +1,19 @@
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.streamlit/secrets.toml
+
+# Histórico local, respostas brutas, exportações e backups
+data/
+logs/
+
+# Configuração local (caminhos e ajustes desta máquina)
+/config.toml
+
+*.sqlite
+*.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
