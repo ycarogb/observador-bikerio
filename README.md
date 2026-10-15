@@ -106,7 +106,7 @@ O coletor e a interface rodam como serviços `systemd`: iniciam com a VM e reini
 
 No painel Oracle Cloud: **Compute → Instances → Create Instance**
 
-- Image: **Canonical Ubuntu 24.04** (o projeto exige Python 3.11+; o 22.04 traz 3.10)
+- Image: **Canonical Ubuntu 24.04**. Em imagens com Python anterior ao 3.11 (20.04, 22.04), o script de instalação baixa um Python 3.12 à parte com o [uv](https://docs.astral.sh/uv/)
 - Shape: **VM.Standard.A1.Flex** (Ampere) com 1 OCPU e 6 GB de memória, ou **VM.Standard.E2.1.Micro** se a Ampere estiver sem capacidade na região
 - Networking: manter a subnet pública com IP público
 - SSH keys: gerar o par e baixar a chave privada, ou enviar a sua chave pública
@@ -120,7 +120,7 @@ cd observador-bikerio
 bash deploy/instalar.sh
 ```
 
-O script instala o Python, cria o `.venv`, adiciona 2 GB de swap quando a VM não tem, e ativa os serviços `bikerio-coletor` e `bikerio-interface` (arquivos em `deploy/`). Sem `config.toml`, vale o `config.exemplo.toml`.
+O script instala as dependências do sistema, cria o `.venv`, adiciona 2 GB de swap quando a VM não tem, e ativa os serviços `bikerio-coletor` e `bikerio-interface` (arquivos em `deploy/`). Sem `config.toml`, vale o `config.exemplo.toml`.
 
 ### 3. Acompanhar a coleta
 

@@ -6,13 +6,9 @@ set -euo pipefail
 RAIZ="$(cd "$(dirname "$0")/.." && pwd)"
 USUARIO="$(id -un)"
 
-sudo apt-get update
-sudo apt-get install -y python3-venv python3-pip
-
-if ! python3 -c 'import sys; sys.exit(sys.version_info < (3, 11))'; then
-  echo "O projeto exige Python 3.11 ou mais. Use a imagem Ubuntu 24.04." >&2
-  exit 1
-fi
+APT="sudo DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=600"
+$APT update
+$APT install -y python3-venv python3-pip curl
 
 if [ -z "$(swapon --show)" ]; then
   sudo fallocate -l 2G /swapfile
@@ -22,7 +18,13 @@ if [ -z "$(swapon --show)" ]; then
   echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab > /dev/null
 fi
 
-python3 -m venv "$RAIZ/.venv"
+# O projeto exige Python 3.11+. Em imagens antigas (ex.: Ubuntu 20.04), o uv baixa um Python 3.12 à parte do sistema.
+if python3 -c 'import sys; sys.exit(sys.version_info < (3, 11))'; then
+  python3 -m venv "$RAIZ/.venv"
+else
+  curl -LsSf https://astral.sh/uv/install.sh | sh
+  "$HOME/.local/bin/uv" venv --python 3.12 --seed "$RAIZ/.venv"
+fi
 "$RAIZ/.venv/bin/pip" install --upgrade pip
 "$RAIZ/.venv/bin/pip" install -e "$RAIZ"
 
