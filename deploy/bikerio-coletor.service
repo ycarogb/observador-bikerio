@@ -1,0 +1,15 @@
+[Unit]
+Description=Observador Bike Rio - coletor contínuo
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=__USUARIO__
+WorkingDirectory=__RAIZ__
+Environment=PYTHONUNBUFFERED=1
+ExecStart=__RAIZ__/.venv/bin/python -m observador_bikerio coletar-continuo
+Restart=always
+RestartSec=15
+
+[Install]
+WantedBy=multi-user.target

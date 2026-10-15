@@ -1,0 +1,15 @@
+[Unit]
+Description=Observador Bike Rio - interface Streamlit (acesso por túnel SSH)
+After=network-online.target bikerio-coletor.service
+Wants=network-online.target
+
+[Service]
+User=__USUARIO__
+WorkingDirectory=__RAIZ__
+Environment=PYTHONUNBUFFERED=1
+ExecStart=__RAIZ__/.venv/bin/python -m streamlit run observador_bikerio/interface.py --server.address 127.0.0.1 --server.port 8501 --server.headless true
+Restart=always
+RestartSec=15
+
+[Install]
+WantedBy=multi-user.target

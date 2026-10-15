@@ -36,7 +36,7 @@ Os indicadores representam mudanças observadas de disponibilidade e não corres
 
 ## Pré-requisitos
 
-- Python 3.11+ (testado com 3.14 no Windows e Ubuntu 22.04)
+- Python 3.11+ (testado com 3.14 no Windows)
 - Acesso de rede ao feed GBFS na coleta real
 
 ---
@@ -100,79 +100,63 @@ Acesse em `http://localhost:8501`.
 
 Para rodar 24/7 sem depender do computador local:
 
+O coletor e a interface rodam como serviços `systemd`: iniciam com a VM e reiniciam sozinhos se caírem. A interface escuta só em `127.0.0.1`; o acesso é por túnel SSH, sem abrir porta na internet.
+
 ### 1. Criar a VM
 
 No painel Oracle Cloud: **Compute → Instances → Create Instance**
-- Image: **Ubuntu 22.04**
-- Shape: **Ampere A1.Flex** — 2 OCPUs, 8 GB RAM (gratuito)
-- Adicionar chave SSH pública
 
-### 2. Abrir a porta 8501
+- Image: **Canonical Ubuntu 24.04** (o projeto exige Python 3.11+; o 22.04 traz 3.10)
+- Shape: **VM.Standard.A1.Flex** (Ampere) com 1 OCPU e 6 GB de memória, ou **VM.Standard.E2.1.Micro** se a Ampere estiver sem capacidade na região
+- Networking: manter a subnet pública com IP público
+- SSH keys: gerar o par e baixar a chave privada, ou enviar a sua chave pública
 
-- **Security List (VCN):** adicionar regra de entrada TCP porta 8501, source `0.0.0.0/0`
-- **Firewall da VM** (após conectar via SSH):
-
-```bash
-sudo iptables -I INPUT -p tcp --dport 8501 -j ACCEPT
-sudo netfilter-persistent save
-```
-
-### 3. Preparar o ambiente
+### 2. Instalar
 
 ```bash
-ssh ubuntu@<ip-da-vm>
-sudo apt update && sudo apt install -y python3-pip python3-venv git
+ssh -i <chave-privada> ubuntu@<ip-da-vm>
 git clone https://github.com/ycarogb/observador-bikerio.git
 cd observador-bikerio
-python3 -m venv .venv
-.venv/bin/pip install -e .
-cp config.exemplo.toml config.toml
-nano config.toml   # ajuste se necessário
+bash deploy/instalar.sh
 ```
 
-### 4. Criar serviços systemd
+O script instala o Python, cria o `.venv`, adiciona 2 GB de swap quando a VM não tem, e ativa os serviços `bikerio-coletor` e `bikerio-interface` (arquivos em `deploy/`). Sem `config.toml`, vale o `config.exemplo.toml`.
 
-**/etc/systemd/system/bikerio-coletor.service**
-```ini
-[Unit]
-Description=Observador Bike Rio - Coletor
-After=network.target
-
-[Service]
-User=ubuntu
-WorkingDirectory=/home/ubuntu/observador-bikerio
-ExecStart=/home/ubuntu/observador-bikerio/.venv/bin/python -m observador_bikerio coletar-continuo
-Restart=always
-RestartSec=10
-
-[Install]
-WantedBy=multi-user.target
-```
-
-**/etc/systemd/system/bikerio-interface.service**
-```ini
-[Unit]
-Description=Observador Bike Rio - Interface
-After=network.target
-
-[Service]
-User=ubuntu
-WorkingDirectory=/home/ubuntu/observador-bikerio
-ExecStart=/home/ubuntu/observador-bikerio/.venv/bin/streamlit run observador_bikerio/interface.py --server.port 8501 --server.headless true
-Restart=always
-RestartSec=10
-
-[Install]
-WantedBy=multi-user.target
-```
+### 3. Acompanhar a coleta
 
 ```bash
-sudo systemctl daemon-reload
-sudo systemctl enable bikerio-coletor bikerio-interface
-sudo systemctl start bikerio-coletor bikerio-interface
+systemctl status bikerio-coletor
+journalctl -u bikerio-coletor -f
+.venv/bin/python -m observador_bikerio caminhos
 ```
 
-Acesse em `http://<ip-da-vm>:8501`.
+### 4. Abrir o mapa pelo túnel SSH
+
+No seu computador:
+
+```bash
+ssh -i <chave-privada> -N -L 8501:127.0.0.1:8501 ubuntu@<ip-da-vm>
+```
+
+Com o túnel aberto, acesse `http://localhost:8501`.
+
+### 5. Atualizar o código
+
+```bash
+cd ~/observador-bikerio
+git pull
+.venv/bin/pip install -e .
+sudo systemctl restart bikerio-coletor bikerio-interface
+```
+
+### 6. Trazer os dados para análise
+
+```bash
+ssh -i <chave-privada> ubuntu@<ip-da-vm> "cd observador-bikerio && .venv/bin/python -m observador_bikerio backup"
+scp -i <chave-privada> -r ubuntu@<ip-da-vm>:observador-bikerio/data/backups ./backups-vm
+```
+
+O backup usa a API de cópia do SQLite e pode rodar com o coletor ativo.
 
 ---
 
