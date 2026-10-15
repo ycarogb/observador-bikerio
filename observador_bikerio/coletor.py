@@ -45,7 +45,7 @@ from observador_bikerio.indicadores import avaliar_par
 from observador_bikerio.normalizador import (
     listar_estacoes,
     normalizar_informacao,
-    normalizar_status,
+    normalizar_dados_estacao,
 )
 from observador_bikerio.registro import configurar_log
 from observador_bikerio.tempo import agora_utc, analisar_instante, formatar_utc
@@ -145,8 +145,8 @@ def _executar_ciclo(configuracao: Configuracao, cliente: ClienteGbfs, agora: dat
     logger = configurar_log(configuracao.pasta_logs)
     inicio_mono = time.monotonic()
     try:
-        descoberta = cliente.obter_json(configuracao.url_descoberta)
-        feeds = descobrir_feeds(descoberta)
+        indice = cliente.obter_json(configuracao.url_indice_gbfs)
+        feeds = descobrir_feeds(indice)
         sistema = None
         aviso_sistema = None
         if "system_information" in feeds:
@@ -159,7 +159,7 @@ def _executar_ciclo(configuracao: Configuracao, cliente: ClienteGbfs, agora: dat
         status = [
             item
             for item in (
-                normalizar_status(bruto) for bruto in listar_estacoes(status_doc, "stations")
+                normalizar_dados_estacao(bruto) for bruto in listar_estacoes(status_doc, "stations")
             )
             if item is not None
         ]
@@ -170,7 +170,7 @@ def _executar_ciclo(configuracao: Configuracao, cliente: ClienteGbfs, agora: dat
             )
         with conectar(configuracao.caminho_banco) as conexao:
             inicializar(conexao)
-            fonte = fonte_por_url(conexao, configuracao.url_descoberta)
+            fonte = fonte_por_url(conexao, configuracao.url_indice_gbfs)
             abertas = estacoes_abertas(conexao, fonte["id"]) if fonte else []
             conhecidas = {item["station_id"] for item in abertas}
             ultima_info = ultima_coleta_de_cadastro(conexao, fonte["id"]) if fonte else None
@@ -186,7 +186,7 @@ def _executar_ciclo(configuracao: Configuracao, cliente: ClienteGbfs, agora: dat
         if precisa_cadastro:
             info_doc = cliente.obter_json(feeds["station_information"])
         arquivos = {
-            "descoberta": salvar_bruto(configuracao.pasta_base, "gbfs", agora, descoberta),
+            "descoberta": salvar_bruto(configuracao.pasta_base, "gbfs", agora, indice),
             "status": salvar_bruto(configuracao.pasta_base, "station_status", agora, status_doc),
         }
         if sistema is not None:
@@ -441,12 +441,12 @@ def _gravar_ciclo(
 
 
 def _sincronizar_fonte(conexao, configuracao, system_id, nome, versao, fuso, agora):
-    atual = fonte_por_url(conexao, configuracao.url_descoberta)
-    sintetica = fonte_sintetica(configuracao.url_descoberta, system_id)
+    atual = fonte_por_url(conexao, configuracao.url_indice_gbfs)
+    sintetica = fonte_sintetica(configuracao.url_indice_gbfs, system_id)
     if atual is None:
         fonte_id = inserir_fonte(
             conexao,
-            url_descoberta=configuracao.url_descoberta,
+            url_indice_gbfs=configuracao.url_indice_gbfs,
             system_id=system_id,
             nome=nome,
             versao_gbfs=versao,
@@ -458,7 +458,7 @@ def _sincronizar_fonte(conexao, configuracao, system_id, nome, versao, fuso, ago
     if atual["system_id"] and system_id and atual["system_id"] != system_id:
         fonte_id = inserir_fonte(
             conexao,
-            url_descoberta=configuracao.url_descoberta,
+            url_indice_gbfs=configuracao.url_indice_gbfs,
             system_id=system_id,
             nome=nome,
             versao_gbfs=versao,
@@ -752,7 +752,7 @@ def _batimento(configuracao: Configuracao, estado: str) -> None:
 def _registrar_falha(configuracao, agora, mensagem, http_status, inicio_mono) -> None:
     with conectar(configuracao.caminho_banco) as conexao:
         inicializar(conexao)
-        fonte = fonte_por_url(conexao, configuracao.url_descoberta)
+        fonte = fonte_por_url(conexao, configuracao.url_indice_gbfs)
         inserir_tentativa(
             conexao,
             {

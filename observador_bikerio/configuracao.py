@@ -16,7 +16,7 @@ class ConfiguracaoInvalida(Exception):
 class Configuracao:
     caminho_arquivo: Path
     diretorio_projeto: Path
-    url_descoberta: str
+    url_indice_gbfs: str
     idioma_nome: str
     intervalo_coleta_segundos: float
     intervalo_cadastro_segundos: float
@@ -84,7 +84,7 @@ def carregar_configuracao(caminho: Path | None = None) -> Configuracao:
     configuracao = Configuracao(
         caminho_arquivo=arquivo.resolve(),
         diretorio_projeto=diretorio,
-        url_descoberta=_texto(fonte, "url_descoberta"),
+        url_indice_gbfs=_texto_url_indice(fonte),
         idioma_nome=_texto(fonte, "idioma_nome") or "pt",
         intervalo_coleta_segundos=_numero(fonte, "intervalo_coleta_segundos"),
         intervalo_cadastro_segundos=_numero(fonte, "intervalo_cadastro_segundos"),
@@ -117,6 +117,14 @@ def _resolver_arquivo(caminho: Path | None) -> Path:
     if local.is_file():
         return local
     return atual / "config.exemplo.toml"
+
+
+def _texto_url_indice(fonte: dict) -> str:
+    if "url_indice_gbfs" in fonte:
+        return _texto(fonte, "url_indice_gbfs")
+    if "url_descoberta" in fonte:
+        return _texto(fonte, "url_descoberta")
+    raise ConfiguracaoInvalida("Campo de texto inválido: url_indice_gbfs")
 
 
 def _texto(secao: dict, campo: str) -> str:
@@ -158,5 +166,5 @@ def _validar(configuracao: Configuracao) -> None:
         raise ConfiguracaoInvalida("O limiar de intervenção deve ser pelo menos 1.")
     if not 0 <= configuracao.limiar_cobertura_percentual <= 100:
         raise ConfiguracaoInvalida("A cobertura mínima deve ficar entre 0 e 100.")
-    if not configuracao.url_descoberta:
-        raise ConfiguracaoInvalida("A URL de descoberta GBFS é obrigatória.")
+    if not configuracao.url_indice_gbfs:
+        raise ConfiguracaoInvalida("A URL do índice GBFS é obrigatória.")

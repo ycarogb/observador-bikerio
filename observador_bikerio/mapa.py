@@ -7,13 +7,11 @@ import html
 import folium
 import pandas as pd
 
-from observador_bikerio.cores import texto_metodo
 from observador_bikerio.textos import (
-    COR_COBERTURA_INSUFICIENTE,
     COR_SEM_DADOS,
-    COR_STATUS_DESATUALIZADO,
-    NOTA_CORES,
+    INDICADORES,
     NOTA_INDICADORES,
+    PALETAS,
 )
 
 CENTRO_RIO = (-22.9068, -43.1729)
@@ -40,7 +38,7 @@ def montar_geojson(resumo: pd.DataFrame) -> dict:
     return {"type": "FeatureCollection", "features": feicoes}
 
 
-def criar_mapa(resumo: pd.DataFrame, legenda: dict, periodo: str, sintetico: bool = False) -> folium.Map:
+def criar_mapa(resumo: pd.DataFrame, legenda: dict, sintetico: bool = False) -> folium.Map:
     coordenadas = []
     if resumo is not None and not resumo.empty:
         for linha in resumo.to_dict(orient="records"):
@@ -72,7 +70,7 @@ def criar_mapa(resumo: pd.DataFrame, legenda: dict, periodo: str, sintetico: boo
             ),
             tooltip=folium.GeoJsonTooltip(fields=["nome", "rotulo"], aliases=["Estação", "Valor"]),
         ).add_to(mapa)
-    _legenda(mapa, legenda, periodo, sintetico)
+    _legenda(mapa, legenda, sintetico)
     return mapa
 
 
@@ -109,8 +107,8 @@ def _html_popup(linha: dict, rotulo: str) -> str:
             f"Versão cadastral: {html.escape(str(linha.get('id_cadastro') or ''))}",
             f"Capacidade: {html.escape(_numero(linha.get('capacidade')))}",
             f"Período: {html.escape(str(linha.get('inicio_periodo_local') or ''))} — {html.escape(str(linha.get('fim_periodo_local') or ''))}",
-            f"Aumentos observados: {html.escape(_numero(linha.get('aumentos_observados')))}",
-            f"Reduções observadas: {html.escape(_numero(linha.get('reducoes_observadas')))}",
+            f"Devoluções de bicicletas: {html.escape(_numero(linha.get('aumentos_observados')))}",
+            f"Retiradas de bicicletas: {html.escape(_numero(linha.get('reducoes_observadas')))}",
             f"Movimentação observada: {html.escape(_numero(linha.get('movimentacao_observada')))}",
             f"Taxa por hora válida: {html.escape(_numero(linha.get('taxa_por_hora_valida')))}",
             f"Horas válidas: {html.escape(_numero(linha.get('horas_validas')))}",
@@ -125,26 +123,24 @@ def _html_popup(linha: dict, rotulo: str) -> str:
     )
 
 
-def _legenda(mapa: folium.Map, legenda: dict, periodo: str, sintetico: bool) -> None:
+def _legenda(mapa: folium.Map, legenda: dict, sintetico: bool) -> None:
     minimo = _numero(legenda.get("minimo"))
     maximo = _numero(legenda.get("maximo"))
     titulo = legenda.get("rotulo") or "Indicador"
     if sintetico:
         titulo = f"SINTÉTICO — {titulo}"
-    unidade = legenda.get("unidade") or ""
-    metodo = texto_metodo(legenda) if legenda.get("rotulo") else "Sem valores classificáveis neste período."
+    indicador = legenda.get("indicador") or ""
+    paleta = PALETAS.get((INDICADORES.get(indicador) or {}).get("paleta") or "", PALETAS["movimento"])
+    degradado = ", ".join(paleta)
     bloco = f"""
     <div style="position: fixed; bottom: 24px; left: 24px; z-index: 9999; background: white;
-                padding: 10px 12px; border: 1px solid #ccc; font-size: 13px; max-width: 320px;">
-      <div style="font-weight: 700; margin-bottom: 4px;">{html.escape(str(titulo))}</div>
-      <div>Unidade: {html.escape(str(unidade))}</div>
-      <div>Mínimo: {html.escape(minimo)} · Máximo: {html.escape(maximo)}</div>
-      <div>Período: {html.escape(periodo)}</div>
-      <div style="margin: 4px 0;">{html.escape(metodo)}</div>
-      <div><span style="display:inline-block;width:12px;height:12px;background:{COR_COBERTURA_INSUFICIENTE};border:1px solid #616161;"></span> cobertura insuficiente</div>
-      <div><span style="display:inline-block;width:12px;height:12px;background:{COR_SEM_DADOS};border:1px solid #111;"></span> sem dados</div>
-      <div><span style="display:inline-block;width:12px;height:12px;background:{COR_STATUS_DESATUALIZADO};border:1px solid #311B46;"></span> status desatualizado</div>
-      <div style="margin-top: 4px;">{html.escape(NOTA_CORES)}</div>
+                padding: 8px 10px; border: 1px solid #ccc; font-size: 12px; width: 220px;">
+      <div style="font-weight: 700; margin-bottom: 6px;">{html.escape(str(titulo))}</div>
+      <div style="height: 12px; border: 1px solid #888; background: linear-gradient(to right, {degradado});"></div>
+      <div style="display: flex; justify-content: space-between; margin-top: 4px;">
+        <span>{html.escape(minimo)}</span>
+        <span>{html.escape(maximo)}</span>
+      </div>
     </div>
     """
     mapa.get_root().html.add_child(folium.Element(bloco))

@@ -8,7 +8,7 @@ NOTA_INDICADORES = (
 )
 
 NOTA_PROXY = (
-    "A movimentação observada é a soma dos aumentos e das reduções válidos "
+    "A movimentação observada é a soma das devoluções e das retiradas válidas "
     "de disponibilidade. É uma proxy de movimentação: não representa o número "
     "confirmado de viagens. Uma mudança de estoque pode resultar de retirada, "
     "devolução, rebalanceamento ou manutenção, e movimentos simultâneos podem "
@@ -60,13 +60,13 @@ INDICADORES = {
         "aplica_cobertura": True,
     },
     "reducoes_observadas": {
-        "rotulo": "Reduções observadas",
+        "rotulo": "Retiradas de bicicletas",
         "unidade": "bicicletas",
         "paleta": "movimento",
         "aplica_cobertura": True,
     },
     "aumentos_observados": {
-        "rotulo": "Aumentos observados",
+        "rotulo": "Devoluções de bicicletas",
         "unidade": "bicicletas",
         "paleta": "movimento",
         "aplica_cobertura": True,
@@ -81,12 +81,6 @@ INDICADORES = {
         "rotulo": "Bicicletas disponíveis na observação mais recente",
         "unidade": "bicicletas",
         "paleta": "bicicletas",
-        "aplica_cobertura": False,
-    },
-    "cobertura_percentual": {
-        "rotulo": "Cobertura da coleta",
-        "unidade": "% do período filtrado",
-        "paleta": "cobertura",
         "aplica_cobertura": False,
     },
 }

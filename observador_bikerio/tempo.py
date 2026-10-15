@@ -46,5 +46,13 @@ def para_exibicao(instante: datetime) -> datetime:
     return instante.astimezone(FUSO_EXIBICAO)
 
 
+def para_grafico(valor: object) -> datetime | None:
+    """Relógio de São Paulo, sem fuso, para o gráfico não adiantar 3 horas."""
+    instante = analisar_instante(valor)
+    if instante is None:
+        return None
+    return para_exibicao(instante).replace(tzinfo=None)
+
+
 def analisar_armazenado(valor: object) -> datetime | None:
     return analisar_instante(valor)

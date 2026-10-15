@@ -21,7 +21,7 @@ class EstacaoCadastral:
 
 
 @dataclass(frozen=True)
-class StatusEstacao:
+class DadosEstacao:
     station_id: str
     last_reported: object
     bicicletas_disponiveis: int | None
@@ -76,7 +76,7 @@ def normalizar_informacao(estacao: object, idioma: str = "pt") -> EstacaoCadastr
     )
 
 
-def normalizar_status(estacao: object) -> StatusEstacao | None:
+def normalizar_dados_estacao(estacao: object) -> DadosEstacao | None:
     if not isinstance(estacao, dict):
         return None
     station_id = _identificador(estacao.get("station_id"))
@@ -99,7 +99,7 @@ def normalizar_status(estacao: object) -> StatusEstacao | None:
     tipos, tipos_invalidos = _tipos(estacao.get("vehicle_types_available"))
     if tipos_invalidos:
         flags.append("valor_invalido")
-    return StatusEstacao(
+    return DadosEstacao(
         station_id=station_id,
         last_reported=analisar_instante(estacao.get("last_reported")),
         bicicletas_disponiveis=bicicletas,

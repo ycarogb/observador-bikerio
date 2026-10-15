@@ -17,7 +17,7 @@ def configuracao_sintetica(tmp_path, **ajustes) -> Configuracao:
     dados = {
         "caminho_arquivo": tmp_path / "config.toml",
         "diretorio_projeto": tmp_path,
-        "url_descoberta": "sintetico://gbfs.json",
+        "url_indice_gbfs": "sintetico://gbfs.json",
         "idioma_nome": "pt",
         "intervalo_coleta_segundos": 60,
         "intervalo_cadastro_segundos": 900,

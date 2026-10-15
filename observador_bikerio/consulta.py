@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import pandas as pd
 
@@ -32,7 +32,14 @@ from observador_bikerio.banco import (
 from observador_bikerio.configuracao import Configuracao
 from observador_bikerio.cores import aplicar_visual
 from observador_bikerio.indicadores import agregar_temporal, construir_janelas, montar_resumo
-from observador_bikerio.tempo import FUSO_EXIBICAO, agora_utc, analisar_instante, formatar_local, formatar_utc
+from observador_bikerio.tempo import (
+    FUSO_EXIBICAO,
+    agora_utc,
+    analisar_instante,
+    formatar_local,
+    formatar_utc,
+    para_grafico,
+)
 
 COLUNAS_RESUMO = [
     "station_id",
@@ -155,6 +162,7 @@ class FiltroConsulta:
     escala: str = "linear"
     limites_fixos: tuple[float, float] | None = None
     limiar_cobertura: float | None = None
+    pintar_baixa_cobertura: bool = False
     escopo: str = "filtros"
 
 
@@ -187,7 +195,7 @@ def consultar(configuracao: Configuracao, filtro: FiltroConsulta) -> ResultadoCo
     with conectar(configuracao.caminho_banco) as conexao:
         inicializar(conexao)
         with leitura(conexao):
-            fonte = fonte_por_url(conexao, configuracao.url_descoberta)
+            fonte = fonte_por_url(conexao, configuracao.url_indice_gbfs)
             if fonte is None:
                 vazio.mensagem = "A base existe, mas ainda não há coleta desta fonte."
                 return vazio
@@ -250,6 +258,7 @@ def consultar(configuracao: Configuracao, filtro: FiltroConsulta) -> ResultadoCo
         escala=filtro.escala,
         limiar_cobertura=limiar,
         limites_fixos=filtro.limites_fixos,
+        pintar_baixa_cobertura=filtro.pintar_baixa_cobertura,
     )
     horas = _temporal(estacoes, anotados, janelas, "hora")
     dias = _temporal(estacoes, anotados, janelas, "dia")
@@ -272,7 +281,7 @@ def consultar(configuracao: Configuracao, filtro: FiltroConsulta) -> ResultadoCo
         filtros=_filtros_serializaveis(filtro, limiar, janelas),
         fonte={
             "id": fonte["id"],
-            "url_descoberta": fonte["url_descoberta"],
+            "url_indice_gbfs": fonte["url_indice_gbfs"],
             "system_id": fonte.get("system_id"),
             "nome": fonte.get("nome"),
             "versao_gbfs": fonte.get("versao_gbfs"),
@@ -289,11 +298,11 @@ def filtro_de_tudo(configuracao: Configuracao, base: FiltroConsulta) -> FiltroCo
         return None
     with conectar(configuracao.caminho_banco) as conexao:
         inicializar(conexao)
-        fonte = fonte_por_url(conexao, configuracao.url_descoberta)
+        fonte = fonte_por_url(conexao, configuracao.url_indice_gbfs)
         if fonte is None:
             return None
-        periodo = periodo_armazenado(conexao, fonte["id"])
-    if not periodo["inicio"] or not periodo["fim"]:
+        periodo = periodo_da_coleta(conexao, fonte["id"])
+    if not periodo or not periodo.get("inicio") or not periodo.get("fim"):
         return None
     inicio = analisar_instante(periodo["inicio"])
     fim = analisar_instante(periodo["fim"])
@@ -312,6 +321,7 @@ def filtro_de_tudo(configuracao: Configuracao, base: FiltroConsulta) -> FiltroCo
         escala=base.escala,
         limites_fixos=None,
         limiar_cobertura=base.limiar_cobertura,
+        pintar_baixa_cobertura=base.pintar_baixa_cobertura,
         escopo="tudo",
     )
 
@@ -337,7 +347,7 @@ def ler_painel(configuracao: Configuracao) -> dict:
     with conectar(configuracao.caminho_banco) as conexao:
         inicializar(conexao)
         with leitura(conexao):
-            fonte = fonte_por_url(conexao, configuracao.url_descoberta)
+            fonte = fonte_por_url(conexao, configuracao.url_indice_gbfs)
             estado = estado_coletor(conexao)
             painel["estado"] = estado
             painel["coletor_ativo"] = _coletor_ativo(
@@ -372,7 +382,7 @@ def historico_estacao(
     with conectar(configuracao.caminho_banco) as conexao:
         inicializar(conexao)
         with leitura(conexao):
-            fonte = fonte_por_url(conexao, configuracao.url_descoberta)
+            fonte = fonte_por_url(conexao, configuracao.url_indice_gbfs)
             if fonte is None:
                 return {
                     "snapshots": pd.DataFrame(),
@@ -394,9 +404,8 @@ def historico_estacao(
             ]
     quadro_snapshots = _quadro([_snapshot_exportavel(item) for item in snapshots], COLUNAS_SNAPSHOTS)
     if not quadro_snapshots.empty:
-        quadro_snapshots["observado_em_local"] = quadro_snapshots["last_reported_utc"].fillna(
-            quadro_snapshots["coletado_em_utc"]
-        )
+        origem = quadro_snapshots["last_reported_utc"].fillna(quadro_snapshots["coletado_em_utc"])
+        quadro_snapshots["observado_em_local"] = origem.map(para_grafico)
     locais = {
         (item.get("latitude"), item.get("longitude"))
         for item in versoes
@@ -410,12 +419,26 @@ def historico_estacao(
     }
 
 
+def janela_fixa(
+    inicio_serie: datetime, fim_serie: datetime, horas: float
+) -> tuple[datetime, datetime]:
+    """Últimas `horas` até o fim da série, sem começar antes da primeira observação comparável."""
+    if horas <= 0:
+        raise ValueError("A janela fixa precisa ter duração positiva.")
+    inicio = fim_serie - timedelta(hours=horas)
+    if inicio < inicio_serie:
+        inicio = inicio_serie
+    if inicio > fim_serie:
+        inicio = fim_serie
+    return inicio, fim_serie
+
+
 def periodo_padrao(configuracao: Configuracao) -> tuple[datetime, datetime] | None:
     if not configuracao.caminho_banco.is_file():
         return None
     with conectar(configuracao.caminho_banco) as conexao:
         inicializar(conexao)
-        fonte = fonte_por_url(conexao, configuracao.url_descoberta)
+        fonte = fonte_por_url(conexao, configuracao.url_indice_gbfs)
         if fonte is None:
             return None
         periodo = periodo_da_coleta(conexao, fonte["id"])
@@ -581,6 +604,7 @@ def _filtros_serializaveis(filtro: FiltroConsulta, limiar: float, janelas) -> di
         "escala": filtro.escala,
         "limites_fixos": filtro.limites_fixos,
         "limiar_cobertura_percentual": limiar,
+        "pintar_baixa_cobertura": filtro.pintar_baixa_cobertura,
         "janelas_utc": [
             [formatar_utc(inicio), formatar_utc(fim)] for inicio, fim in janelas
         ],

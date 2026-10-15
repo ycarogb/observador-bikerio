@@ -15,7 +15,7 @@ from observador_bikerio.tempo import agora_utc, formatar_utc
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS fontes (
     id INTEGER PRIMARY KEY,
-    url_descoberta TEXT NOT NULL,
+    url_indice_gbfs TEXT NOT NULL,
     system_id TEXT,
     nome TEXT,
     versao_gbfs TEXT,
@@ -178,6 +178,9 @@ def conectar(caminho: Path) -> Iterator[sqlite3.Connection]:
 
 def inicializar(conexao: sqlite3.Connection) -> None:
     conexao.executescript(SCHEMA)
+    colunas = {linha["name"] for linha in conexao.execute("PRAGMA table_info(fontes)").fetchall()}
+    if "url_descoberta" in colunas and "url_indice_gbfs" not in colunas:
+        conexao.execute("ALTER TABLE fontes RENAME COLUMN url_descoberta TO url_indice_gbfs")
 
 
 @contextmanager
@@ -230,7 +233,7 @@ def registrar_batimento(conexao: sqlite3.Connection, estado: str) -> None:
 def inserir_fonte(
     conexao: sqlite3.Connection,
     *,
-    url_descoberta: str,
+    url_indice_gbfs: str,
     system_id: str | None,
     nome: str | None,
     versao_gbfs: str | None,
@@ -241,11 +244,11 @@ def inserir_fonte(
     cursor = conexao.execute(
         """
         INSERT INTO fontes (
-            url_descoberta, system_id, nome, versao_gbfs, fuso, sintetica, criada_em_utc
+            url_indice_gbfs, system_id, nome, versao_gbfs, fuso, sintetica, criada_em_utc
         ) VALUES (?, ?, ?, ?, ?, ?, ?)
         """,
         (
-            url_descoberta,
+            url_indice_gbfs,
             system_id,
             nome,
             versao_gbfs,
@@ -281,7 +284,7 @@ def atualizar_fonte(
 
 def fonte_por_url(conexao: sqlite3.Connection, url: str) -> dict | None:
     linha = conexao.execute(
-        "SELECT * FROM fontes WHERE url_descoberta = ? ORDER BY id DESC LIMIT 1",
+        "SELECT * FROM fontes WHERE url_indice_gbfs = ? ORDER BY id DESC LIMIT 1",
         (url,),
     ).fetchone()
     return dict(linha) if linha else None
@@ -542,10 +545,24 @@ def estado_coletor(conexao: sqlite3.Connection) -> dict | None:
 
 
 def periodo_da_coleta(conexao: sqlite3.Connection, fonte_id: int) -> dict | None:
-    """Janela das coletas, alargada até o início dos intervalos que terminam nela.
+    """Janela dos intervalos comparáveis. Snapshots isolados não esticam o período.
 
-    last_reported antigo, anterior ao observador, não estica esse período.
+    Assim a cobertura não usa o vão de uma coleta antiga, só o trecho em que
+    houve movimentação observada.
     """
+    comparavel = conexao.execute(
+        """
+        SELECT MIN(inicio_utc) AS inicio, MAX(fim_utc) AS fim
+        FROM intervalos
+        WHERE fonte_id = ?
+          AND comparavel = 1
+          AND inicio_utc IS NOT NULL
+          AND fim_utc IS NOT NULL
+        """,
+        (fonte_id,),
+    ).fetchone()
+    if comparavel is not None and comparavel["inicio"] and comparavel["fim"]:
+        return {"inicio": comparavel["inicio"], "fim": comparavel["fim"]}
     linha = conexao.execute(
         """
         SELECT MIN(coletado_em_utc) AS inicio, MAX(coletado_em_utc) AS fim
@@ -556,23 +573,7 @@ def periodo_da_coleta(conexao: sqlite3.Connection, fonte_id: int) -> dict | None
     ).fetchone()
     if linha is None or not linha["inicio"] or not linha["fim"]:
         return None
-    inicio = linha["inicio"]
-    fim = linha["fim"]
-    extra = conexao.execute(
-        """
-        SELECT MIN(inicio_utc) AS inicio
-        FROM intervalos
-        WHERE fonte_id = ?
-          AND inicio_utc IS NOT NULL
-          AND fim_utc IS NOT NULL
-          AND fim_utc >= ?
-          AND fim_utc <= ?
-        """,
-        (fonte_id, inicio, fim),
-    ).fetchone()
-    if extra is not None and extra["inicio"] and extra["inicio"] < inicio:
-        inicio = extra["inicio"]
-    return {"inicio": inicio, "fim": fim}
+    return {"inicio": linha["inicio"], "fim": linha["fim"]}
 
 
 def periodo_armazenado(conexao: sqlite3.Connection, fonte_id: int) -> dict:

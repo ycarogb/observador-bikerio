@@ -29,6 +29,7 @@ def aplicar_visual(
     escala: str,
     limiar_cobertura: float,
     limites_fixos: tuple[float, float] | None = None,
+    pintar_baixa_cobertura: bool = True,
 ) -> dict:
     from observador_bikerio.indicadores import classificar
 
@@ -42,20 +43,22 @@ def aplicar_visual(
         linha["rotulo_indicador"] = definicao["rotulo"]
         linha["unidade_indicador"] = definicao["unidade"]
 
+    na_escala = frozenset(CATEGORIAS_NA_ESCALA)
+    if not pintar_baixa_cobertura:
+        na_escala = CATEGORIAS_NA_ESCALA | {"cobertura_insuficiente"}
     valores = [
         linha["valor_indicador"]
         for linha in linhas
-        if linha["categoria"] in CATEGORIAS_NA_ESCALA and linha["valor_indicador"] is not None
+        if linha["categoria"] in na_escala and linha["valor_indicador"] is not None
     ]
     info = _info_escala(valores, escala, limites_fixos, definicao)
+    info["pintar_baixa_cobertura"] = pintar_baixa_cobertura
     for linha in linhas:
         cor, borda = _cor_linha(linha, paleta, info)
         linha["cor"] = cor
         linha["borda"] = borda
-    info["na_escala"] = sum(1 for linha in linhas if linha["categoria"] in CATEGORIAS_NA_ESCALA)
-    info["sem_classificacao"] = sum(
-        1 for linha in linhas if linha["categoria"] not in CATEGORIAS_NA_ESCALA
-    )
+    info["na_escala"] = sum(1 for linha in linhas if linha["categoria"] in na_escala)
+    info["sem_classificacao"] = sum(1 for linha in linhas if linha["categoria"] not in na_escala)
     info["indicador"] = indicador
     return info
 
@@ -102,7 +105,7 @@ def _cor_linha(linha: dict, paleta: tuple[str, ...], info: dict) -> tuple[str, s
     categoria = linha["categoria"]
     if categoria in CATEGORIAS_SEM_DADOS:
         return COR_SEM_DADOS, BORDA_SEM_DADOS
-    if categoria == "cobertura_insuficiente":
+    if categoria == "cobertura_insuficiente" and info.get("pintar_baixa_cobertura", True):
         return COR_COBERTURA_INSUFICIENTE, BORDA_INSUFICIENTE
     if categoria == "status_desatualizado":
         return COR_STATUS_DESATUALIZADO, BORDA_DESATUALIZADO

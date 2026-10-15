@@ -182,7 +182,7 @@ def _metadados(configuracao: Configuracao, resultado: ResultadoConsulta, frequen
         "fonte": {
             "nome": resultado.fonte.get("nome"),
             "system_id": resultado.fonte.get("system_id"),
-            "url_descoberta": resultado.fonte.get("url_descoberta"),
+            "url_indice_gbfs": resultado.fonte.get("url_indice_gbfs"),
             "versao_gbfs": resultado.fonte.get("versao_gbfs"),
             "fuso_da_fonte": resultado.fonte.get("fuso_fonte"),
             "sintetica": bool(resultado.fonte.get("sintetica")),

@@ -40,7 +40,7 @@ RAIZ = Path(__file__).resolve().parents[1]
 def _cliente(config, documentos_status, documentos_info):
     return ClienteFalso(
         {
-            config.url_descoberta: descoberta(),
+            config.url_indice_gbfs: descoberta(),
             "sintetico://system_information": sistema(),
             "sintetico://station_information": documentos_info,
             "sintetico://station_status": documentos_status,
@@ -276,6 +276,57 @@ def test_espera_respeita_ttl_e_retry_after():
         descobrir_feeds({"data": {"feeds": []}, "version": "3.0"})
 
 
+def test_periodo_da_coleta_usa_so_intervalos_comparaveis(tmp_path):
+    from observador_bikerio.banco import inicializar, inserir_fonte, periodo_da_coleta
+
+    config = configuracao_sintetica(tmp_path)
+    with conectar(config.caminho_banco) as conexao:
+        inicializar(conexao)
+        fonte_id = inserir_fonte(
+            conexao,
+            url_indice_gbfs="sintetico://gbfs.json",
+            system_id="sintetico",
+            nome="t",
+            versao_gbfs="3.0",
+            fuso="America/Sao_Paulo",
+            sintetica=True,
+            criada_em_utc="2026-10-14T12:43:00Z",
+        )
+        conexao.execute(
+            "INSERT INTO estacoes (fonte_id, station_id, valido_desde_utc) VALUES (?, 'A', ?)",
+            (fonte_id, "2026-10-14T12:43:00Z"),
+        )
+        estacao_id = int(conexao.execute("SELECT id FROM estacoes").fetchone()[0])
+        conexao.execute(
+            """
+            INSERT INTO snapshots (
+                fonte_id, estacao_id, station_id, coletado_em_utc, flags_qualidade, chave_observacao
+            ) VALUES (?, ?, 'A', '2026-10-14T12:43:00Z', '[]', 'manha')
+            """,
+            (fonte_id, estacao_id),
+        )
+        conexao.execute(
+            """
+            INSERT INTO snapshots (
+                fonte_id, estacao_id, station_id, coletado_em_utc, flags_qualidade, chave_observacao
+            ) VALUES (?, ?, 'A', '2026-10-14T21:10:00Z', '[]', 'noite')
+            """,
+            (fonte_id, estacao_id),
+        )
+        conexao.execute(
+            """
+            INSERT INTO intervalos (
+                fonte_id, station_id, snapshot_anterior_id, snapshot_atual_id,
+                inicio_utc, fim_utc, comparavel, flags_qualidade
+            ) VALUES (?, 'A', 1, 2, '2026-10-14T21:07:00Z', '2026-10-14T21:10:00Z', 1, '[]')
+            """,
+            (fonte_id,),
+        )
+        periodo = periodo_da_coleta(conexao, fonte_id)
+    assert periodo["inicio"].startswith("2026-10-14T21:07")
+    assert periodo["fim"].startswith("2026-10-14T21:10")
+
+
 def test_banco_nao_apaga_snapshots():
     texto = (RAIZ / "observador_bikerio" / "banco.py").read_text(encoding="utf-8")
     assert "DELETE FROM" not in texto
@@ -287,5 +338,6 @@ def _filtro(inicio, fim) -> FiltroConsulta:
         fim=fim,
         indicador="movimentacao_observada",
         limiar_cobertura=90,
+        pintar_baixa_cobertura=True,
         escopo="filtros",
     )

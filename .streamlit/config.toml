@@ -4,9 +4,10 @@ gatherUsageStats = false
 [theme]
 base = "light"
 primaryColor = "#9B2226"
-backgroundColor = "#FFFFFF"
-secondaryBackgroundColor = "#F7F4EF"
-textColor = "#1F1F1F"
+backgroundColor = "#F5F5F0"
+secondaryBackgroundColor = "#FFFFFF"
+textColor = "#1A1A1A"
+font = "sans serif"
 
 [client]
 toolbarMode = "minimal"

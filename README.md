@@ -1,189 +1,246 @@
 # Observador Bike Rio
 
-> Aplicação em Python para coletar a disponibilidade das estações do Bike Rio, guardar um histórico local e exportar camadas para análise em um Sistema de Informações Geográficas para Transportes (SIG-T), como o QGIS.
+> Aplicação em Python para coletar a disponibilidade das estações do Bike Rio, guardar um histórico local e visualizar a movimentação em um mapa interativo.
 
-O coletor consulta o feed público [GBFS 3.0](https://gbfs.org/documentation/reference/) do [Bike Rio](https://www.bikerio.rio/), grava snapshots em SQLite e conserva as respostas originais. A interface Streamlit lê só o banco local, desenha um marcador por estação e exporta CSV, Parquet, GeoPackage e GeoJSON.
+O coletor consulta o feed público [GBFS 3.0](https://gbfs.org/documentation/reference/) do [Bike Rio](https://www.bikerio.rio/), grava snapshots em SQLite e conserva as respostas originais comprimidas. A interface Streamlit lê só o banco local, desenha um marcador colorido por estação e exporta os dados para análise em SIG (QGIS, etc.).
 
-O documento de descoberta identifica o sistema como `bike_rio`. O nome publicado hoje no feed, em todos os idiomas, é `kitchen`. A interface mostra o identificador e esse nome.
+**Tópicos:** GBFS · disponibilidade de estações · histórico local · SQLite · mapa interativo · Streamlit · Folium · GeoPackage · QGIS
 
-**Tópicos:** GBFS · disponibilidade de estações · histórico local · SQLite · mapa · GeoPackage · QGIS · SIG-T
-
-Os indicadores representam mudanças observadas de disponibilidade e não correspondem necessariamente ao número real de viagens.
+---
 
 ## O que esta aplicação faz
 
-- Descobre os feeds a partir de `gbfs.json` e lê `station_status` e `station_information`.
-- Guarda cadastro versionado, snapshots, tentativas de coleta e intervalos comparáveis.
-- Calcula aumentos observados, reduções observadas e movimentação observada.
-- Mostra cada estação no mapa, com cor proporcional ao indicador escolhido.
-- Exporta o mesmo recorte do mapa para análise externa. A análise SIG não é feita aqui.
+- **Coleta** a disponibilidade de bicicletas via feed GBFS, a cada 60 segundos, gravando um snapshot por ciclo.
+- **Calcula** retiradas observadas, devoluções observadas e movimentação total entre snapshots consecutivos.
+- **Exibe** um mapa com uma estação por marcador, com cor proporcional ao indicador selecionado.
+- **Filtra** por janela de tempo: 1 h, 6 h, 24 h, todo o período ou intervalo personalizado.
+- **Exporta** o recorte atual para CSV, Parquet, GeoPackage e GeoJSON.
 
-O coletor é um processo à parte. Abrir, atualizar ou fechar a interface não inicia, duplica nem encerra a coleta. Desligar ou suspender o computador interrompe a coleta: não há serviço em segundo plano nesta versão.
+O coletor é um processo independente da interface. Abrir ou fechar o mapa não inicia nem encerra a coleta.
 
-## Nota metodológica
+---
 
-Os dados consultados representam disponibilidade de bicicletas, não registros individuais de viagens.
+## Indicadores
 
-Uma mudança de estoque pode resultar de retirada, devolução, rebalanceamento ou manutenção. Movimentos simultâneos podem se compensar entre duas consultas.
+| Indicador | O que representa |
+|-----------|-----------------|
+| **Retiradas de bicicletas** | Soma dos decrementos de estoque — proxy de viagens geradas |
+| **Devoluções de bicicletas** | Soma dos incrementos de estoque — proxy de viagens recebidas |
+| **Movimentação observada** | Retiradas + devoluções |
+| **Movimentação por hora válida** | Movimentação dividida pelas horas com cobertura ≥ 90% |
+| **Bicicletas disponíveis** | Estoque no snapshot mais recente |
 
-Na interface e nas exportações:
+Os indicadores representam mudanças observadas de disponibilidade e não correspondem necessariamente ao número real de viagens. Uma mesma viagem aparece como retirada numa estação e devolução em outra.
 
-- **Aumento observado** = max(estoque atual − estoque anterior, 0)
-- **Redução observada** = max(estoque anterior − estoque atual, 0)
-- **Movimentação observada** = aumento observado + redução observada
-
-A movimentação observada é uma **proxy**. Não é o número confirmado de viagens. A soma entre estações também não é o total de viagens do sistema: a mesma viagem pode aparecer como redução numa estação e aumento em outra.
-
-O delta só é calculado quando existe observação anterior, os horários são compatíveis, a lacuna não passa do limite, a fonte é a mesma e a alteração cadastral ou operacional não impede a comparação. Campo ausente fica nulo. Ausência de estação ou falha de coleta não viram estoque zero.
-
-O limite inicial de lacuna é de 15 minutos. No feed do Bike Rio, `last_reported` costuma avançar em passos de cerca de três minutos. Um limite menor que esse passo classifica a observação nova como lacuna e deixa a movimentação nula. Intervalos mais longos continuam sem delta.
-
-O delta é atribuído ao **horário final** do intervalo. O instante exato da movimentação é desconhecido.
-
-A taxa por hora válida divide a movimentação observada pelas horas cobertas. Ela padroniza pelo tempo observado: não recupera movimentos perdidos nem corrige viés de cobertura.
-
-A cobertura é a duração da união dos intervalos válidos, recortados ao período e às janelas de hora e dia da semana. Lacunas acima do limite não contam como tempo observado.
-
-Variações grandes recebem a flag `possivel_intervencao`. Isso não identifica rebalanceamento com certeza e não exclui o dado, salvo se o filtro pedir.
-
-Séries de fontes diferentes não são misturadas. Se o `system_id` mudar, a série nova fica em outro registro de fonte.
+---
 
 ## Pré-requisitos
 
-- [Python 3.11+](https://www.python.org/downloads/) (testado com 3.14 no Windows)
-- Acesso de rede à fonte GBFS na coleta real
+- Python 3.11+ (testado com 3.14 no Windows e Ubuntu 22.04)
+- Acesso de rede ao feed GBFS na coleta real
 
-Verifique a instalação:
+---
 
-```powershell
-python --version
-```
-
-## Como executar
-
-Na raiz do repositório:
+## Instalação
 
 ```powershell
+# Windows (PowerShell)
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 ```
 
-Se a ativação do ambiente for bloqueada nesta sessão:
-
-```powershell
-Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
-.\.venv\Scripts\Activate.ps1
-```
-
-Equivalente em bash:
-
 ```bash
-python -m venv .venv
+# Linux / macOS
+python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-A configuração de exemplo aponta para o documento de descoberta do Bike Rio. Para ajustar intervalo, pastas ou limiares nesta máquina, copie `config.exemplo.toml` para `config.toml`. O arquivo local não entra no Git.
+Copie o arquivo de configuração de exemplo e ajuste se necessário:
+
+```powershell
+copy config.exemplo.toml config.toml
+```
+
+O `config.toml` não entra no Git.
+
+---
 
 ## Comandos
 
 | Comando | O que faz |
-| --- | --- |
-| `python -m observador_bikerio coletar` | Consulta a fonte uma vez e grava o banco |
-| `python -m observador_bikerio coletar-continuo` | Mantém a coleta até Ctrl+C |
+|---------|-----------|
+| `python -m observador_bikerio coletar` | Coleta uma vez e grava o banco |
+| `python -m observador_bikerio coletar-continuo` | Coleta continuamente até Ctrl+C |
+| `python -m observador_bikerio interface` | Abre a interface Streamlit |
 | `python -m observador_bikerio backup` | Copia o SQLite com a API de backup |
-| `python -m observador_bikerio interface` | Abre o mapa. Não inicia o coletor |
 | `python -m observador_bikerio caminhos` | Mostra os caminhos absolutos |
 | `python -m pytest` | Roda os testes sintéticos |
 
-PowerShell, na raiz, com o ambiente ativo:
+---
 
+## Execução local (dois terminais)
+
+**Terminal 1 — coletor:**
 ```powershell
-python -m observador_bikerio coletar
 python -m observador_bikerio coletar-continuo
-python -m observador_bikerio interface
-python -m pytest
 ```
 
-O intervalo inicial é 60 segundos. Se o TTL do feed for maior que o intervalo configurado, a espera usa o TTL. HTTP 429 respeita `Retry-After`. Há timeout, poucas retentativas e espera progressiva. Uma segunda instância do coletor encerra em vez de duplicar a gravação.
+**Terminal 2 — interface:**
+```powershell
+python -m observador_bikerio interface
+```
 
-O cadastro (`station_information`) é atualizado com menos frequência que o status. O padrão é 15 minutos, ou na hora se aparecer uma estação desconhecida.
+Acesse em `http://localhost:8501`.
 
-## Interface
+---
 
-A tela mostra o mapa, o estado do coletor, a última tentativa, o último sucesso, o período armazenado, a quantidade de estações, a tabela do mesmo recorte, o histórico da estação clicada e a exportação. Os caminhos exibidos são absolutos.
+## Deploy em servidor (Oracle Cloud Always Free)
 
-A atualização da tela relê o SQLite. Ela não consulta o GBFS.
+Para rodar 24/7 sem depender do computador local:
 
-No mapa de movimentação, estação abaixo da cobertura mínima (padrão 90%) fica cinza, com a indicação de cobertura insuficiente. Esse limiar é um filtro de qualidade, não uma garantia de ausência de viés.
+### 1. Criar a VM
 
-As cores de movimentação vão do amarelo-claro ao vermelho-escuro. Cor clara é valor menor; cor escura é valor maior. O tamanho do marcador não varia. A escala padrão é linear; a alternativa é log1p, sem alterar os números dos pop-ups e das exportações. As cores são relativas ao período, salvo quando há limites fixos.
+No painel Oracle Cloud: **Compute → Instances → Create Instance**
+- Image: **Ubuntu 22.04**
+- Shape: **Ampere A1.Flex** — 2 OCPUs, 8 GB RAM (gratuito)
+- Adicionar chave SSH pública
 
-Zero com cobertura suficiente, cobertura insuficiente, ausência de observação e status desatualizado não compartilham a mesma cor.
+### 2. Abrir a porta 8501
+
+- **Security List (VCN):** adicionar regra de entrada TCP porta 8501, source `0.0.0.0/0`
+- **Firewall da VM** (após conectar via SSH):
+
+```bash
+sudo iptables -I INPUT -p tcp --dport 8501 -j ACCEPT
+sudo netfilter-persistent save
+```
+
+### 3. Preparar o ambiente
+
+```bash
+ssh ubuntu@<ip-da-vm>
+sudo apt update && sudo apt install -y python3-pip python3-venv git
+git clone https://github.com/ycarogb/observador-bikerio.git
+cd observador-bikerio
+python3 -m venv .venv
+.venv/bin/pip install -e .
+cp config.exemplo.toml config.toml
+nano config.toml   # ajuste se necessário
+```
+
+### 4. Criar serviços systemd
+
+**/etc/systemd/system/bikerio-coletor.service**
+```ini
+[Unit]
+Description=Observador Bike Rio - Coletor
+After=network.target
+
+[Service]
+User=ubuntu
+WorkingDirectory=/home/ubuntu/observador-bikerio
+ExecStart=/home/ubuntu/observador-bikerio/.venv/bin/python -m observador_bikerio coletar-continuo
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+```
+
+**/etc/systemd/system/bikerio-interface.service**
+```ini
+[Unit]
+Description=Observador Bike Rio - Interface
+After=network.target
+
+[Service]
+User=ubuntu
+WorkingDirectory=/home/ubuntu/observador-bikerio
+ExecStart=/home/ubuntu/observador-bikerio/.venv/bin/streamlit run observador_bikerio/interface.py --server.port 8501 --server.headless true
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable bikerio-coletor bikerio-interface
+sudo systemctl start bikerio-coletor bikerio-interface
+```
+
+Acesse em `http://<ip-da-vm>:8501`.
+
+---
 
 ## Estrutura do projeto
 
 ```
 observador-bikerio/
-├── config.exemplo.toml
+├── config.exemplo.toml          # configuração de exemplo
 ├── observador_bikerio/
-│   ├── fonte_gbfs.py        # descoberta e download GBFS
-│   ├── normalizador.py      # campos ausentes permanecem nulos
-│   ├── coletor.py           # um ciclo ou coleta contínua
-│   ├── banco.py             # SQLite
-│   ├── indicadores.py       # comparação, cobertura e agregação
-│   ├── consulta.py          # leitura usada pelo mapa e pela exportação
-│   ├── mapa.py              # um marcador por estação
-│   ├── exportacao.py        # CSV, Parquet, GeoPackage, GeoJSON
-│   └── interface.py         # Streamlit
-├── tests/                   # fixtures sintéticas, isoladas da base real
-└── README.md
+│   ├── configuracao.py          # leitura do config.toml
+│   ├── fonte_gbfs.py            # cliente HTTP e descoberta GBFS
+│   ├── normalizador.py          # parse e normalização dos feeds
+│   ├── coletor.py               # ciclo de coleta e coleta contínua
+│   ├── banco.py                 # SQLite (WAL), migrações, consultas
+│   ├── indicadores.py           # cálculo de retiradas, devoluções, cobertura
+│   ├── consulta.py              # leitura agregada para interface e exportação
+│   ├── mapa.py                  # mapa Folium com marcadores por estação
+│   ├── exportacao.py            # CSV, Parquet, GeoPackage, GeoJSON
+│   ├── textos.py                # rótulos e notas metodológicas
+│   └── interface.py             # Streamlit
+└── tests/                       # testes sintéticos, isolados do banco real
 ```
 
-## Dados e armazenamento
+---
 
-Pastas padrão, relativas à raiz do projeto e exibidas em caminho absoluto na interface:
+## Armazenamento
 
 | Caminho | Conteúdo |
-| --- | --- |
-| `data/bikerio.sqlite` | Cadastro, snapshots, tentativas, intervalos e batimento |
-| `data/raw/AAAA-MM-DD/` | JSON original comprimido com gzip |
-| `data/exports/` | CSV, Parquet, GeoPackage, GeoJSON, metadados e dicionário |
+|---------|---------|
+| `data/bikerio.sqlite` | Cadastro, snapshots, tentativas, intervalos |
+| `data/raw/AAAA-MM-DD/` | JSON original comprimido (gzip) |
+| `data/exports/` | CSV, Parquet, GeoPackage, GeoJSON, metadados |
 | `data/backups/` | Cópias consistentes do SQLite |
-| `logs/` | Log com rotação |
+| `logs/` | Log com rotação diária |
 
-Nada disso é apagado automaticamente. `data/`, `logs/` e `config.toml` estão no `.gitignore`.
+`data/`, `logs/` e `config.toml` estão no `.gitignore`.
 
-Horários são gravados em UTC e agregados em `America/Sao_Paulo`.
+Horários gravados em UTC, exibidos em `America/Sao_Paulo`.
 
-O SQLite usa WAL para a interface consultar enquanto o coletor grava. O backup usa `Connection.backup()`, também durante a coleta.
+---
 
-## Exportação para SIG-T
+## Nota metodológica
 
-A exportação segue os filtros da tela, ou todos os dados com as flags preservadas.
+Os indicadores são calculados por comparação de snapshots consecutivos:
 
-- CSV e Parquet: cadastro, snapshots, intervalos, estação–hora, estação–dia e resumo do período.
-- GeoPackage (`bikerio.gpkg`), CRS **EPSG:4326**:
-  - `cadastro_estacoes` — pontos com validade
-  - `indicadores_periodo` — o resumo desenhado no mapa
-  - `serie_estacao_hora` ou `serie_estacao_dia`
-- GeoJSON opcional do resumo, com longitude e latitude nessa ordem.
+- **Devolução** = max(estoque atual − estoque anterior, 0)
+- **Retirada** = max(estoque anterior − estoque atual, 0)
+- **Movimentação** = devolução + retirada
 
-Se a estação muda de lugar dentro do período, a exportação separa a feição pela versão cadastral. Não junta coordenadas diferentes num ponto só.
+O delta só é calculado quando há observação anterior válida, os horários são compatíveis e a lacuna não excede o limite (padrão: 15 minutos). Campo ausente fica nulo; ausência de estação no feed não vira estoque zero.
 
-`metadados.json` e `dicionario.md` registram fonte, período, fuso, definições, filtros, limites, versão do processamento e limitações. Para refazer o número do mapa, some só as linhas com `incluido_no_resumo = 1`.
+Cobertura ≥ 90% da janela de tempo é exigida para a estação entrar na escala de cor.
 
-## Como abrir no QGIS
+Os dados consultados representam disponibilidade de bicicletas, não registros individuais de viagens.
 
-1. Em **Camada → Adicionar camada → Adicionar camada vetorial**, escolha `bikerio.gpkg` e a camada `indicadores_periodo` ou a série temporal.
-2. Nas propriedades da camada, confira o CRS **EPSG:4326**. Os nomes dos campos estão em `dicionario.md`. Horários `*_utc` estão em UTC; `*_local` está em America/Sao_Paulo, com offset.
-3. Em **Simbologia**, use graduado no campo do indicador (por exemplo `movimentacao_observada`), com rampa do amarelo-claro ao vermelho-escuro.
-4. Filtre a cobertura com `cobertura_percentual >= 90` ou `categoria IN ('classificada', 'zero_movimentacao')`. Cobertura insuficiente continua no arquivo, só sai do mapa se o filtro pedir.
-5. No controlador temporal, use `inicio_periodo_local` e `fim_periodo_local` como início e fim do intervalo.
-6. Relacione outras tabelas futuras pelo `station_id`. Use `id_cadastro` quando a mesma estação tiver mais de uma localização.
+---
 
-Esta aplicação não classifica uso do solo, não faz regressão e não prevê demanda.
+## Exportação para SIG-T (QGIS)
+
+O GeoPackage exportado (`bikerio.gpkg`) usa CRS **EPSG:4326** e contém:
+
+- `cadastro_estacoes` — pontos com validade temporal
+- `indicadores_periodo` — resumo desenhado no mapa
+- `serie_estacao_hora` ou `serie_estacao_dia` — série temporal
+
+No QGIS: **Camada → Adicionar camada vetorial**, escolha `bikerio.gpkg`. Use simbologia graduada no campo `movimentacao_observada` com rampa do amarelo ao vermelho. Filtre cobertura com `cobertura_percentual >= 90`.
+
+---
 
 ## Testes
 
@@ -191,24 +248,18 @@ Esta aplicação não classifica uso do solo, não faz regressão e não prevê 
 python -m pytest
 ```
 
-Os testes usam estações e feeds marcados como sintéticos, em pasta temporária. Eles não alimentam `data/bikerio.sqlite`.
+Os testes usam estações e feeds sintéticos em pasta temporária. Não alimentam `data/bikerio.sqlite`. A coleta real depende de rede e fica fora da suíte automática.
 
-A coleta real depende da rede e fica de fora da suíte automática.
+---
 
-## Limitações
+## Fonte dos dados
 
-- A movimentação observada não é contagem de viagens.
-- Sem coleta em execução, o histórico para. Suspender o computador também para.
-- Estação que some do feed não vira zero.
-- A cor do mapa, sem limites fixos, só compara estações dentro do período selecionado.
-- Dados de demonstração, quando existirem, usam `system_id` sintético e a interface os identifica como sintéticos.
+Feed público GBFS 3.0 do Bike Rio:
 
-## Fonte e atribuição
+```
+https://riodejaneiro.publicbikesystem.net/customer/gbfs/v3.0/gbfs.json
+```
 
-Documento de descoberta inicial:
-
-`https://riodejaneiro.publicbikesystem.net/customer/gbfs/v3.0/gbfs.json`
-
-Os endereços de `station_status` e `station_information` são lidos desse documento a cada ciclo. Eles não ficam fixos no código. A especificação é a [referência GBFS](https://gbfs.org/documentation/reference/).
+Os endereços de `station_status` e `station_information` são descobertos a partir desse índice a cada ciclo — não ficam fixos no código.
 
 Atribuição: disponibilidade consultada no feed público GBFS do Bike Rio, publicado em `riodejaneiro.publicbikesystem.net`.

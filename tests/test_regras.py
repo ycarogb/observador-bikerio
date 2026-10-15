@@ -19,8 +19,9 @@ from observador_bikerio.indicadores import (
     montar_resumo,
     segundos_cobertos,
 )
-from observador_bikerio.normalizador import normalizar_informacao, normalizar_status
-from observador_bikerio.tempo import FUSO_EXIBICAO
+from observador_bikerio.normalizador import normalizar_informacao, normalizar_dados_estacao
+from observador_bikerio.consulta import janela_fixa
+from observador_bikerio.tempo import FUSO_EXIBICAO, para_grafico
 from observador_bikerio.textos import (
     COR_COBERTURA_INSUFICIENTE,
     COR_SEM_DADOS,
@@ -125,11 +126,11 @@ def test_lacuna_timestamps_valor_ausente_e_mudancas():
 
 
 def test_campo_ausente_nao_vira_zero_e_nome_em_portugues():
-    status = normalizar_status({"station_id": "7", "is_installed": True, "last_reported": "2026-05-10T15:00:00Z"})
+    status = normalizar_dados_estacao({"station_id": "7", "is_installed": True, "last_reported": "2026-05-10T15:00:00Z"})
     assert status is not None
     assert status.bicicletas_disponiveis is None
     assert status.vagas_disponiveis is None
-    negativo = normalizar_status({"station_id": "7", "num_vehicles_available": -1, "last_reported": "2026-05-10T15:00:00Z"})
+    negativo = normalizar_dados_estacao({"station_id": "7", "num_vehicles_available": -1, "last_reported": "2026-05-10T15:00:00Z"})
     assert negativo.bicicletas_disponiveis is None
     assert "valor_invalido" in negativo.flags
     cadastro = normalizar_informacao(
@@ -174,6 +175,23 @@ def test_cobertura_de_horario_e_dia_da_semana():
     assert linhas[0]["cobertura_percentual"] == pytest.approx(50)
     assert linhas[0]["horas_validas"] == pytest.approx(1)
     assert sum(item["incluido_no_resumo"] for item in anotados) == 1
+
+
+def test_janela_fixa_recorta_as_ultimas_horas_sem_passar_do_inicio():
+    inicio = datetime(2026, 10, 14, 21, 7, tzinfo=timezone.utc)
+    fim = datetime(2026, 10, 14, 23, 7, tzinfo=timezone.utc)
+    uma = janela_fixa(inicio, fim, 1)
+    assert uma == (fim - timedelta(hours=1), fim)
+    dia = janela_fixa(inicio, fim, 24)
+    assert dia == (inicio, fim)
+
+
+def test_grafico_usa_relogio_de_sao_paulo_nao_utc():
+    ponto = para_grafico("2026-10-14T21:00:00.000+00:00")
+    assert ponto is not None
+    assert ponto.tzinfo is None
+    assert ponto.hour == 18
+    assert ponto.day == 14
 
 
 def test_fuso_de_sao_paulo_no_agregado():
@@ -236,6 +254,17 @@ def test_cores_de_zero_sem_dados_baixa_cobertura_e_valores_iguais():
     assert zero["cor"] != COR_COBERTURA_INSUFICIENTE
     assert info["na_escala"] == 1
     assert info["sem_classificacao"] == 2
+
+    aplicar_visual(
+        [baixa],
+        "movimentacao_observada",
+        escala="linear",
+        limiar_cobertura=90,
+        pintar_baixa_cobertura=False,
+    )
+    assert baixa["categoria"] == "cobertura_insuficiente"
+    assert baixa["cor"] != COR_COBERTURA_INSUFICIENTE
+    assert baixa["cor"] != COR_SEM_DADOS
 
     iguais = [_linha_visual(5, 100, 1), _linha_visual(5, 100, 1)]
     info_igual = aplicar_visual(iguais, "movimentacao_observada", escala="linear", limiar_cobertura=90)
