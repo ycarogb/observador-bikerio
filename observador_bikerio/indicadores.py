@@ -180,23 +180,21 @@ def montar_resumo(
     horas_no_filtro = denominador / 3600 if denominador else 0
     estoques = {(item["estacao_id"]): item for item in ultimos_estoques}
     anotados: list[dict] = []
+    relacionados_por_estacao: dict[int, list[dict]] = {}
     for intervalo in intervalos:
         incluido = _intervalo_incluivel(intervalo, janelas, excluir_sinalizados)
         copia = dict(intervalo)
         copia["incluido_no_resumo"] = incluido
         anotados.append(copia)
+        for estacao_id in {copia.get("estacao_id_inicio"), copia.get("estacao_id_fim")}:
+            relacionados_por_estacao.setdefault(estacao_id, []).append(copia)
 
     linhas = []
     for estacao in estacoes:
-        relacionados = [
-            item
-            for item in anotados
-            if item.get("estacao_id_fim") == estacao["id"]
-            or item.get("estacao_id_inicio") == estacao["id"]
-        ]
+        relacionados = relacionados_por_estacao.get(estacao["id"], [])
         incluidos = [
             item
-            for item in anotados
+            for item in relacionados
             if item["incluido_no_resumo"] and item.get("estacao_id_fim") == estacao["id"]
         ]
         lacunas = [

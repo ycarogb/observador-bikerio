@@ -155,7 +155,7 @@ def main() -> None:
             "Janela",
             RECORTES,
             horizontal=True,
-            index=0,
+            index=RECORTES.index("1h"),
             help="O mapa acumula retiradas, devoluções e movimentação nesta janela.",
         )
     with col_indicador:
@@ -273,7 +273,7 @@ def _renderizar(configuracao, controles: dict) -> None:
     if filtro is None:
         st.warning("Ainda não há observações armazenadas para esta fonte.")
         return
-    resultado = consultar(configuracao, filtro)
+    resultado = consultar(configuracao, filtro, com_exportacao=False)
     if resultado.mensagem and resultado.resumo.empty:
         st.warning(resultado.mensagem)
         return
@@ -310,7 +310,7 @@ def _renderizar(configuracao, controles: dict) -> None:
         _historico(configuracao, filtro, resultado)
     _eventos(painel)
     with st.expander("Exportação para SIG-T", expanded=False):
-        _exportacao(configuracao, filtro, resultado)
+        _exportacao(configuracao, filtro)
 
 
 def _status_principal(painel: dict, filtro: FiltroConsulta) -> None:
@@ -433,7 +433,7 @@ def _eventos(painel: dict) -> None:
         st.dataframe(pd.DataFrame(eventos), width="stretch", hide_index=True)
 
 
-def _exportacao(configuracao, filtro: FiltroConsulta, resultado) -> None:
+def _exportacao(configuracao, filtro: FiltroConsulta) -> None:
     st.caption(
         "A exportação cobre o recorte do mapa e da tabela. "
         "Filtros atuais: período e estações da barra lateral."
@@ -442,13 +442,13 @@ def _exportacao(configuracao, filtro: FiltroConsulta, resultado) -> None:
     geojson = st.checkbox("Gerar também o GeoJSON do resumo", value=True)
     escopo = st.radio("Recorte", ["filtros atuais", "todos os dados"], horizontal=True)
     if st.button("Exportar"):
-        alvo = resultado
+        alvo_filtro = filtro
         if escopo == "todos os dados":
-            completo = filtro_de_tudo(configuracao, filtro)
-            if completo is None:
+            alvo_filtro = filtro_de_tudo(configuracao, filtro)
+            if alvo_filtro is None:
                 st.error("Não há dados armazenados para exportar.")
                 return
-            alvo = consultar(configuracao, completo)
+        alvo = consultar(configuracao, alvo_filtro)
         pasta = exportar(configuracao, alvo, frequencia_temporal=frequencia, gerar_geojson=geojson)
         st.success(f"Arquivos gravados em {pasta}")
 

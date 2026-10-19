@@ -171,6 +171,27 @@ def test_coleta_sintetica_movimento_repeticao_lacuna_e_ausencia(tmp_path):
         assert consultar_sql(conexao, "SELECT COUNT(*) AS total FROM snapshots")[0]["total"] == 9
 
 
+def test_mapa_sem_exportacao_tem_o_mesmo_resumo(tmp_path):
+    config = configuracao_sintetica(tmp_path)
+    cliente = _cliente(
+        config,
+        [status(_status_inicial(), 0), status(_status_seguinte(), 60)],
+        info(_cadastro_base()),
+    )
+    coletar_uma_vez(config, cliente=cliente, agora=T0)
+    coletar_uma_vez(config, cliente=cliente, agora=T0 + timedelta(seconds=60))
+    filtro = _filtro(T0, T0 + timedelta(seconds=60))
+
+    completo = consultar(config, filtro)
+    mapa = consultar(config, filtro, com_exportacao=False)
+
+    pd.testing.assert_frame_equal(mapa.resumo, completo.resumo)
+    assert mapa.contagens == completo.contagens
+    assert mapa.legenda == completo.legenda
+    assert not completo.snapshots.empty and not completo.intervalos.empty and not completo.horas.empty
+    assert mapa.snapshots.empty and mapa.intervalos.empty and mapa.horas.empty and mapa.dias.empty
+
+
 def test_lacuna_excessiva_nao_inventa_movimento(tmp_path):
     config = configuracao_sintetica(tmp_path)
     documentos = [

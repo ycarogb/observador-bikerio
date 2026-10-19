@@ -550,16 +550,32 @@ def periodo_da_coleta(conexao: sqlite3.Connection, fonte_id: int) -> dict | None
     Assim a cobertura não usa o vão de uma coleta antiga, só o trecho em que
     houve movimentação observada.
     """
+    # Por estação, para usar ix_intervalos_fim: o MIN/MAX direto lê a tabela inteira.
+    # Intervalos comparáveis de uma estação não se sobrepõem, então o primeiro pelo fim também tem o menor início.
     comparavel = conexao.execute(
         """
-        SELECT MIN(inicio_utc) AS inicio, MAX(fim_utc) AS fim
-        FROM intervalos
-        WHERE fonte_id = ?
-          AND comparavel = 1
-          AND inicio_utc IS NOT NULL
-          AND fim_utc IS NOT NULL
+        SELECT
+            MIN((
+                SELECT i.inicio_utc FROM intervalos AS i
+                WHERE i.fonte_id = ? AND i.station_id = e.station_id
+                  AND i.comparavel = 1
+                  AND i.inicio_utc IS NOT NULL
+                  AND i.fim_utc IS NOT NULL
+                ORDER BY i.fim_utc
+                LIMIT 1
+            )) AS inicio,
+            MAX((
+                SELECT i.fim_utc FROM intervalos AS i
+                WHERE i.fonte_id = ? AND i.station_id = e.station_id
+                  AND i.comparavel = 1
+                  AND i.inicio_utc IS NOT NULL
+                  AND i.fim_utc IS NOT NULL
+                ORDER BY i.fim_utc DESC
+                LIMIT 1
+            )) AS fim
+        FROM (SELECT DISTINCT station_id FROM estacoes WHERE fonte_id = ?) AS e
         """,
-        (fonte_id,),
+        (fonte_id, fonte_id, fonte_id),
     ).fetchone()
     if comparavel is not None and comparavel["inicio"] and comparavel["fim"]:
         return {"inicio": comparavel["inicio"], "fim": comparavel["fim"]}
@@ -697,6 +713,7 @@ def ultimos_estoques_no_periodo(
     station_ids: list[str] | None = None,
 ) -> list[dict]:
     extra, params_ids = _filtro_estacoes(station_ids)
+    # Sem INDEXED BY, o SQLite lê a tabela inteira; com ele, o filtro de tempo roda no índice e só as linhas da janela são lidas.
     return consultar_sql(
         conexao,
         f"""
@@ -705,7 +722,7 @@ def ultimos_estoques_no_periodo(
                 PARTITION BY estacao_id
                 ORDER BY COALESCE(last_reported_utc, coletado_em_utc) DESC, id DESC
             ) AS rn
-            FROM snapshots
+            FROM snapshots INDEXED BY ix_snapshots_estacao_tempo
             WHERE fonte_id = ?
               AND COALESCE(last_reported_utc, coletado_em_utc) >= ?
               AND COALESCE(last_reported_utc, coletado_em_utc) <= ?

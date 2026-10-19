@@ -182,7 +182,10 @@ class ResultadoConsulta:
     linhas: list[dict] = field(default_factory=list)
 
 
-def consultar(configuracao: Configuracao, filtro: FiltroConsulta) -> ResultadoConsulta:
+def consultar(
+    configuracao: Configuracao, filtro: FiltroConsulta, *, com_exportacao: bool = True
+) -> ResultadoConsulta:
+    """Sem exportação, só o resumo do mapa é calculado: snapshots, séries e tabelas de intervalos ficam vazios."""
     limiar = (
         configuracao.limiar_cobertura_percentual
         if filtro.limiar_cobertura is None
@@ -210,8 +213,10 @@ def consultar(configuracao: Configuracao, filtro: FiltroConsulta) -> ResultadoCo
             brutos_estoques = ultimos_estoques_no_periodo(
                 conexao, fonte["id"], inicio_txt, fim_txt, filtro.station_ids
             )
-            brutos_snapshots = snapshots_no_periodo(
-                conexao, fonte["id"], inicio_txt, fim_txt, filtro.station_ids
+            brutos_snapshots = (
+                snapshots_no_periodo(conexao, fonte["id"], inicio_txt, fim_txt, filtro.station_ids)
+                if com_exportacao
+                else []
             )
             if filtro.escopo == "tudo":
                 brutos_cadastro = todo_cadastro(conexao, fonte["id"])
@@ -260,14 +265,18 @@ def consultar(configuracao: Configuracao, filtro: FiltroConsulta) -> ResultadoCo
         limites_fixos=filtro.limites_fixos,
         pintar_baixa_cobertura=filtro.pintar_baixa_cobertura,
     )
-    horas = _temporal(estacoes, anotados, janelas, "hora")
-    dias = _temporal(estacoes, anotados, janelas, "dia")
+    if com_exportacao:
+        horas = _temporal(estacoes, anotados, janelas, "hora")
+        dias = _temporal(estacoes, anotados, janelas, "dia")
+        exportaveis = [_intervalo_exportavel(item) for item in anotados]
+    else:
+        horas = dias = exportaveis = []
     mensagem = None
     if not janelas:
         mensagem = "O período filtrado não tem duração. Não há janela para calcular cobertura."
     return ResultadoConsulta(
         resumo=_quadro(linhas, COLUNAS_RESUMO),
-        intervalos=_quadro([_intervalo_exportavel(item) for item in anotados], COLUNAS_INTERVALOS),
+        intervalos=_quadro(exportaveis, COLUNAS_INTERVALOS),
         horas=_quadro(horas, COLUNAS_TEMPORAL),
         dias=_quadro(dias, COLUNAS_TEMPORAL),
         snapshots=_quadro([_snapshot_exportavel(item) for item in brutos_snapshots], COLUNAS_SNAPSHOTS),
