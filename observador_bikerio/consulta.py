@@ -19,7 +19,6 @@ from observador_bikerio.banco import (
     inicializar,
     intervalos_sobrepostos,
     leitura,
-    periodo_armazenado,
     periodo_da_coleta,
     resumo_intervalos_por_estacao,
     snapshots_no_periodo,
@@ -376,7 +375,6 @@ def ler_painel(configuracao: Configuracao) -> dict:
         "estado": None,
         "ultima_tentativa": None,
         "ultimo_sucesso": None,
-        "periodo": None,
         "estacoes_abertas": 0,
         "fonte": None,
         "eventos": [],
@@ -399,7 +397,6 @@ def ler_painel(configuracao: Configuracao) -> dict:
                 painel["fonte"] = dict(fonte)
                 painel["sintetica"] = bool(fonte.get("sintetica"))
                 painel["ultimo_sucesso"] = ultimo_sucesso(conexao, fonte["id"])
-                painel["periodo"] = periodo_armazenado(conexao, fonte["id"])
                 painel["estacoes_abertas"] = contar_estacoes_abertas(conexao, fonte["id"])
                 painel["eventos"] = eventos_recentes(conexao, fonte["id"])
                 painel["opcoes_estacoes"] = [

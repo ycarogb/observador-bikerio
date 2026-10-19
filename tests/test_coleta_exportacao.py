@@ -242,6 +242,11 @@ def test_cenario_de_qualidade_exercita_lacuna_intervencao_e_mudanca(tmp_path):
     assert "possivel_intervencao" in a["flags_qualidade"]
     assert int(a["movimentacao_observada"]) == 3 + 6 + 16 + 2
     assert "mudanca_cadastral" in ",".join(resumo.loc[resumo.station_id == "B", "flags_qualidade"])
+    estoques = {
+        (linha.station_id, linha.latitude): int(linha.bicicletas_disponiveis)
+        for linha in resumo.itertuples()
+    }
+    assert estoques == {("A", -22.90): 18, ("B", -22.91): 4, ("B", -22.95): 7, ("C", -22.92): 11}
 
     filtro.excluir_sinalizados = True
     sem_sinalizados = consultar(config, filtro, com_exportacao=False).resumo

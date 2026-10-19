@@ -592,25 +592,6 @@ def periodo_da_coleta(conexao: sqlite3.Connection, fonte_id: int) -> dict | None
     return {"inicio": linha["inicio"], "fim": linha["fim"]}
 
 
-def periodo_armazenado(conexao: sqlite3.Connection, fonte_id: int) -> dict:
-    linha = conexao.execute(
-        """
-        SELECT
-            MIN(COALESCE(last_reported_utc, coletado_em_utc)) AS inicio,
-            MAX(COALESCE(last_reported_utc, coletado_em_utc)) AS fim,
-            COUNT(*) AS snapshots
-        FROM snapshots
-        WHERE fonte_id = ?
-        """,
-        (fonte_id,),
-    ).fetchone()
-    return {
-        "inicio": linha["inicio"] if linha else None,
-        "fim": linha["fim"] if linha else None,
-        "snapshots": int(linha["snapshots"]) if linha else 0,
-    }
-
-
 def contar_estacoes_abertas(conexao: sqlite3.Connection, fonte_id: int) -> int:
     linha = conexao.execute(
         "SELECT COUNT(*) AS total FROM estacoes WHERE fonte_id = ? AND valido_ate_utc IS NULL",
@@ -713,23 +694,59 @@ def ultimos_estoques_no_periodo(
     station_ids: list[str] | None = None,
 ) -> list[dict]:
     extra, params_ids = _filtro_estacoes(station_ids)
-    # Sem INDEXED BY, o SQLite lê a tabela inteira; com ele, o filtro de tempo roda no índice e só as linhas da janela são lidas.
+    # Duas buscas no índice por cadastro (com e sem last_reported) em vez de ler a janela inteira;
+    # entre as duas, vale o mesmo critério: COALESCE(last_reported, coletado) e depois id.
     return consultar_sql(
         conexao,
         f"""
-        SELECT * FROM (
-            SELECT *, ROW_NUMBER() OVER (
-                PARTITION BY estacao_id
-                ORDER BY COALESCE(last_reported_utc, coletado_em_utc) DESC, id DESC
-            ) AS rn
-            FROM snapshots INDEXED BY ix_snapshots_estacao_tempo
+        WITH alvo AS (
+            SELECT id AS estacao_id, station_id FROM estacoes
             WHERE fonte_id = ?
-              AND COALESCE(last_reported_utc, coletado_em_utc) >= ?
-              AND COALESCE(last_reported_utc, coletado_em_utc) <= ?
+              AND valido_desde_utc <= ?
+              AND (valido_ate_utc IS NULL OR valido_ate_utc > ?)
               {extra}
+        ),
+        candidatos AS (
+            SELECT (
+                SELECT x.id FROM snapshots AS x INDEXED BY ix_snapshots_estacao_tempo
+                WHERE x.fonte_id = ? AND x.station_id = a.station_id AND x.estacao_id = a.estacao_id
+                  AND x.last_reported_utc >= ? AND x.last_reported_utc <= ?
+                ORDER BY x.last_reported_utc DESC, x.id DESC
+                LIMIT 1
+            ) AS snapshot_id
+            FROM alvo AS a
+            UNION ALL
+            SELECT (
+                SELECT x.id FROM snapshots AS x INDEXED BY ix_snapshots_estacao_tempo
+                WHERE x.fonte_id = ? AND x.station_id = a.station_id AND x.estacao_id = a.estacao_id
+                  AND x.last_reported_utc IS NULL
+                  AND x.coletado_em_utc >= ? AND x.coletado_em_utc <= ?
+                ORDER BY x.coletado_em_utc DESC, x.id DESC
+                LIMIT 1
+            )
+            FROM alvo AS a
+        )
+        SELECT * FROM (
+            SELECT s.*, ROW_NUMBER() OVER (
+                PARTITION BY s.estacao_id
+                ORDER BY COALESCE(s.last_reported_utc, s.coletado_em_utc) DESC, s.id DESC
+            ) AS rn
+            FROM candidatos AS c
+            JOIN snapshots AS s ON s.id = c.snapshot_id
         ) WHERE rn = 1
         """,
-        (fonte_id, inicio_utc, fim_utc, *params_ids),
+        (
+            fonte_id,
+            fim_utc,
+            inicio_utc,
+            *params_ids,
+            fonte_id,
+            inicio_utc,
+            fim_utc,
+            fonte_id,
+            inicio_utc,
+            fim_utc,
+        ),
     )
 
 
@@ -839,6 +856,7 @@ def resumo_intervalos_por_estacao(
         flags AS (
             SELECT incluidos.estacao_id, json_group_array(DISTINCT j.value) AS flags
             FROM incluidos, json_each(incluidos.flags) AS j
+            WHERE incluidos.flags <> '[]'
             GROUP BY incluidos.estacao_id
         ),
         totais AS (
