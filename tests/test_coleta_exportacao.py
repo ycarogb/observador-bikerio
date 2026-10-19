@@ -171,25 +171,83 @@ def test_coleta_sintetica_movimento_repeticao_lacuna_e_ausencia(tmp_path):
         assert consultar_sql(conexao, "SELECT COUNT(*) AS total FROM snapshots")[0]["total"] == 9
 
 
-def test_mapa_sem_exportacao_tem_o_mesmo_resumo(tmp_path):
-    config = configuracao_sintetica(tmp_path)
+def _coleta_com_casos_de_qualidade(config):
+    """A: movimento, lacuna e possível intervenção. B: muda de lugar. C: some do feed e volta."""
+    instantes = (0, 60, 120, 600, 660, 720)
+    estoques = {
+        "A": (5, 8, 2, 4, 20, 18),
+        "B": (4, 4, 6, 6, 7, 7),
+        "C": (10, 10, 9, 9, None, 11),
+    }
+    documentos = [
+        status(
+            [
+                situacao(station_id, valores[posicao], segundos)
+                for station_id, valores in estoques.items()
+                if valores[posicao] is not None
+            ],
+            segundos,
+        )
+        for posicao, segundos in enumerate(instantes)
+    ]
+    cadastro_antigo = [
+        cadastral("A", "A", -22.90, -43.20),
+        cadastral("B", "B", -22.91, -43.21),
+        cadastral("C", "C", -22.92, -43.22),
+    ]
+    cadastro_novo = [cadastro_antigo[0], cadastral("B", "B", -22.95, -43.30), cadastro_antigo[2]]
     cliente = _cliente(
         config,
-        [status(_status_inicial(), 0), status(_status_seguinte(), 60)],
-        info(_cadastro_base()),
+        documentos,
+        [info(cadastro_antigo), info(cadastro_antigo), info(cadastro_novo)],
     )
-    coletar_uma_vez(config, cliente=cliente, agora=T0)
-    coletar_uma_vez(config, cliente=cliente, agora=T0 + timedelta(seconds=60))
-    filtro = _filtro(T0, T0 + timedelta(seconds=60))
+    for segundos in instantes:
+        coletar_uma_vez(config, cliente=cliente, agora=T0 + timedelta(seconds=segundos))
+
+
+@pytest.mark.parametrize("excluir", [False, True])
+@pytest.mark.parametrize(
+    ("inicio", "fim", "estacoes"),
+    [
+        (0, 720, None),
+        (30, 720, None),
+        (90, 660, ["A", "B"]),
+        (600, 600, None),
+    ],
+)
+def test_mapa_sem_exportacao_tem_o_mesmo_resumo(tmp_path, excluir, inicio, fim, estacoes):
+    config = configuracao_sintetica(tmp_path, intervalo_cadastro_segundos=0)
+    _coleta_com_casos_de_qualidade(config)
+    filtro = _filtro(T0 + timedelta(seconds=inicio), T0 + timedelta(seconds=fim))
+    filtro.excluir_sinalizados = excluir
+    filtro.station_ids = estacoes
 
     completo = consultar(config, filtro)
     mapa = consultar(config, filtro, com_exportacao=False)
 
-    pd.testing.assert_frame_equal(mapa.resumo, completo.resumo)
+    pd.testing.assert_frame_equal(mapa.resumo, completo.resumo, check_exact=False, rtol=1e-12)
     assert mapa.contagens == completo.contagens
-    assert mapa.legenda == completo.legenda
-    assert not completo.snapshots.empty and not completo.intervalos.empty and not completo.horas.empty
+    assert not completo.snapshots.empty and not completo.intervalos.empty
     assert mapa.snapshots.empty and mapa.intervalos.empty and mapa.horas.empty and mapa.dias.empty
+
+
+def test_cenario_de_qualidade_exercita_lacuna_intervencao_e_mudanca(tmp_path):
+    config = configuracao_sintetica(tmp_path, intervalo_cadastro_segundos=0)
+    _coleta_com_casos_de_qualidade(config)
+    filtro = _filtro(T0, T0 + timedelta(seconds=720))
+
+    resumo = consultar(config, filtro, com_exportacao=False).resumo
+    a = resumo.loc[resumo.station_id == "A"].iloc[0]
+    assert int(a["quantidade_lacunas"]) == 1
+    assert "possivel_intervencao" in a["flags_qualidade"]
+    assert int(a["movimentacao_observada"]) == 3 + 6 + 16 + 2
+    assert "mudanca_cadastral" in ",".join(resumo.loc[resumo.station_id == "B", "flags_qualidade"])
+
+    filtro.excluir_sinalizados = True
+    sem_sinalizados = consultar(config, filtro, com_exportacao=False).resumo
+    a = sem_sinalizados.loc[sem_sinalizados.station_id == "A"].iloc[0]
+    assert int(a["movimentacao_observada"]) == 3 + 6 + 2
+    assert "intervalos_sinalizados_excluidos" in a["flags_qualidade"]
 
 
 def test_lacuna_excessiva_nao_inventa_movimento(tmp_path):

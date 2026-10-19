@@ -733,6 +733,151 @@ def ultimos_estoques_no_periodo(
     )
 
 
+def resumo_intervalos_por_estacao(
+    conexao: sqlite3.Connection,
+    fonte_id: int,
+    inicio_utc: str,
+    fim_utc: str,
+    *,
+    excluir_sinalizados: bool,
+    flags_sinalizados: frozenset[str],
+    station_ids: list[str] | None = None,
+) -> list[dict]:
+    """Agrega por cadastro os intervalos que tocam a janela, com as mesmas regras de montar_resumo.
+
+    Os ids saem do índice e as linhas são lidas em ordem de gravação; a cobertura é a união
+    dos trechos incluídos, recortados ao início da janela.
+    """
+    extra, params_ids = _filtro_estacoes(station_ids)
+    # As flags são gravadas por codificar_flags (lista JSON de nomes); buscar o nome entre aspas equivale a json_each e é bem mais barato.
+    sinalizados = [json.dumps(flag, ensure_ascii=False) for flag in sorted(flags_sinalizados)]
+    teste_sinalizado = " OR ".join("instr(flags, ?) > 0" for _ in sinalizados) or "0"
+    return consultar_sql(
+        conexao,
+        f"""
+        WITH alvo AS (
+            SELECT DISTINCT station_id FROM estacoes WHERE fonte_id = ? {extra}
+        ),
+        ids AS (
+            SELECT x.id FROM alvo AS s
+            CROSS JOIN intervalos AS x INDEXED BY ix_intervalos_fim
+              ON x.fonte_id = ? AND x.station_id = s.station_id AND x.fim_utc >= ?
+            UNION ALL
+            SELECT x.id FROM alvo AS s
+            CROSS JOIN intervalos AS x INDEXED BY ix_intervalos_fim
+              ON x.fonte_id = ? AND x.station_id = s.station_id AND x.fim_utc IS NULL
+        ),
+        lidos AS (
+            SELECT
+                i.estacao_id_inicio,
+                i.estacao_id_fim,
+                i.inicio_utc,
+                i.fim_utc,
+                i.aumento_observado,
+                i.reducao_observada,
+                i.movimentacao_observada,
+                i.comparavel = 1 AS comparavel,
+                CASE
+                    WHEN json_valid(i.flags_qualidade) AND json_type(i.flags_qualidade) = 'array'
+                    THEN i.flags_qualidade ELSE '[]'
+                END AS flags,
+                (i.fim_utc IS NOT NULL AND i.fim_utc >= ? AND i.fim_utc <= ?) AS fim_na_janela
+            FROM intervalos AS i
+            WHERE i.id IN (SELECT id FROM ids)
+              AND (i.inicio_utc IS NULL OR i.inicio_utc <= ?)
+        ),
+        base AS (
+            SELECT
+                lidos.*,
+                ({teste_sinalizado}) AS sinalizado,
+                instr(flags, '"lacuna"') > 0 AS lacuna,
+                instr(flags, '"mudanca_cadastral"') > 0 AS mudanca_cadastral
+            FROM lidos
+        ),
+        marcados AS MATERIALIZED (
+            SELECT
+                base.*,
+                (comparavel AND inicio_utc IS NOT NULL AND fim_na_janela AND NOT (? AND sinalizado)) AS incluido
+            FROM base
+        ),
+        vinculos AS (
+            SELECT estacao_id_fim AS estacao_id, 1 AS no_fim, marcados.*
+            FROM marcados WHERE estacao_id_fim IS NOT NULL
+            UNION ALL
+            SELECT estacao_id_inicio AS estacao_id, 0 AS no_fim, marcados.*
+            FROM marcados
+            WHERE estacao_id_inicio IS NOT NULL AND estacao_id_inicio IS NOT estacao_id_fim
+        ),
+        incluidos AS MATERIALIZED (
+            SELECT * FROM vinculos WHERE no_fim AND incluido
+        ),
+        trechos AS (
+            SELECT
+                estacao_id,
+                a,
+                b,
+                MAX(b) OVER (
+                    PARTITION BY estacao_id ORDER BY a, b
+                    ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
+                ) AS ate
+            FROM (
+                SELECT
+                    estacao_id,
+                    MAX(
+                        CAST(ROUND((julianday(inicio_utc) - 2440587.5) * 86400000) AS INTEGER),
+                        CAST(ROUND((julianday(?) - 2440587.5) * 86400000) AS INTEGER)
+                    ) AS a,
+                    CAST(ROUND((julianday(fim_utc) - 2440587.5) * 86400000) AS INTEGER) AS b
+                FROM incluidos
+            )
+            WHERE b > a
+        ),
+        cobertura AS (
+            SELECT estacao_id, SUM(MAX(0, b - MAX(a, COALESCE(ate, a)))) / 1000.0 AS segundos
+            FROM trechos GROUP BY estacao_id
+        ),
+        flags AS (
+            SELECT incluidos.estacao_id, json_group_array(DISTINCT j.value) AS flags
+            FROM incluidos, json_each(incluidos.flags) AS j
+            GROUP BY incluidos.estacao_id
+        ),
+        totais AS (
+            SELECT
+                estacao_id,
+                SUM(no_fim AND incluido) AS intervalos_validos,
+                SUM(CASE WHEN no_fim AND incluido THEN aumento_observado END) AS aumentos,
+                SUM(CASE WHEN no_fim AND incluido THEN reducao_observada END) AS reducoes,
+                SUM(CASE WHEN no_fim AND incluido THEN movimentacao_observada END) AS movimentacao,
+                SUM(lacuna AND fim_na_janela) AS quantidade_lacunas,
+                MAX(no_fim AND comparavel AND NOT incluido AND fim_na_janela) AS tem_excluidos,
+                MAX(mudanca_cadastral) AS tem_mudanca_cadastral
+            FROM vinculos
+            GROUP BY estacao_id
+        )
+        SELECT
+            totais.*,
+            COALESCE(cobertura.segundos, 0.0) AS segundos,
+            COALESCE(flags.flags, '[]') AS flags
+        FROM totais
+        LEFT JOIN cobertura USING (estacao_id)
+        LEFT JOIN flags USING (estacao_id)
+        """,
+        (
+            fonte_id,
+            *params_ids,
+            fonte_id,
+            inicio_utc,
+            fonte_id,
+            inicio_utc,
+            fim_utc,
+            fim_utc,
+            *sinalizados,
+            1 if excluir_sinalizados else 0,
+            inicio_utc,
+        ),
+    )
+
+
 def todo_cadastro(conexao: sqlite3.Connection, fonte_id: int) -> list[dict]:
     return consultar_sql(
         conexao,

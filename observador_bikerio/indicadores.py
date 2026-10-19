@@ -176,9 +176,6 @@ def montar_resumo(
     fim_periodo: datetime,
 ) -> tuple[list[dict], list[dict]]:
     """Devolve as linhas do resumo e os intervalos anotados com incluido_no_resumo."""
-    denominador = duracao_janelas(janelas)
-    horas_no_filtro = denominador / 3600 if denominador else 0
-    estoques = {(item["estacao_id"]): item for item in ultimos_estoques}
     anotados: list[dict] = []
     relacionados_por_estacao: dict[int, list[dict]] = {}
     for intervalo in intervalos:
@@ -188,51 +185,109 @@ def montar_resumo(
         anotados.append(copia)
         for estacao_id in {copia.get("estacao_id_inicio"), copia.get("estacao_id_fim")}:
             relacionados_por_estacao.setdefault(estacao_id, []).append(copia)
+    agregados = {
+        estacao["id"]: _agregar_estacao(
+            estacao["id"], relacionados_por_estacao.get(estacao["id"], []), janelas
+        )
+        for estacao in estacoes
+    }
+    linhas = resumir_estacoes(
+        estacoes,
+        agregados,
+        ultimos_estoques,
+        janelas,
+        limiar_cobertura=limiar_cobertura,
+        limite_desatualizado_segundos=limite_desatualizado_segundos,
+        fim_periodo=fim_periodo,
+    )
+    return linhas, anotados
 
+
+AGREGADO_VAZIO = {
+    "intervalos_validos": 0,
+    "aumentos": None,
+    "reducoes": None,
+    "movimentacao": None,
+    "segundos": 0.0,
+    "quantidade_lacunas": 0,
+    "flags": frozenset(),
+    "tem_excluidos": False,
+    "tem_mudanca_cadastral": False,
+}
+
+
+def _agregar_estacao(estacao_id: int, relacionados: list[dict], janelas: list) -> dict:
+    """Totais de um cadastro. resumo_intervalos_por_estacao (banco) aplica as mesmas regras em SQL."""
+    incluidos = [
+        item
+        for item in relacionados
+        if item["incluido_no_resumo"] and item.get("estacao_id_fim") == estacao_id
+    ]
+    lacunas = [
+        item
+        for item in relacionados
+        if "lacuna" in set(item.get("flags") or ())
+        and item.get("fim") is not None
+        and fim_em_janelas(item["fim"], janelas)
+    ]
+    excluidos = [
+        item
+        for item in relacionados
+        if item.get("estacao_id_fim") == estacao_id
+        and item.get("comparavel")
+        and not item["incluido_no_resumo"]
+        and item.get("fim") is not None
+        and fim_em_janelas(item["fim"], janelas)
+    ]
+    flags: set[str] = set()
+    for item in incluidos:
+        flags.update(item.get("flags") or ())
+    return {
+        "intervalos_validos": len(incluidos),
+        "aumentos": sum(int(item["aumento_observado"]) for item in incluidos) if incluidos else None,
+        "reducoes": sum(int(item["reducao_observada"]) for item in incluidos) if incluidos else None,
+        "movimentacao": sum(int(item["movimentacao_observada"]) for item in incluidos) if incluidos else None,
+        "segundos": segundos_cobertos([(item["inicio"], item["fim"]) for item in incluidos], janelas),
+        "quantidade_lacunas": len(lacunas),
+        "flags": flags,
+        "tem_excluidos": bool(excluidos),
+        "tem_mudanca_cadastral": any(
+            "mudanca_cadastral" in set(item.get("flags") or ()) for item in relacionados
+        ),
+    }
+
+
+def resumir_estacoes(
+    estacoes: list[dict],
+    agregados: dict[int, dict],
+    ultimos_estoques: list[dict],
+    janelas: list[tuple[datetime, datetime]],
+    *,
+    limiar_cobertura: float,
+    limite_desatualizado_segundos: float,
+    fim_periodo: datetime,
+) -> list[dict]:
+    """Uma linha por cadastro a partir dos totais de cada estação. Cadastro sem totais não teve intervalo."""
+    denominador = duracao_janelas(janelas)
+    horas_no_filtro = denominador / 3600 if denominador else 0
+    estoques = {(item["estacao_id"]): item for item in ultimos_estoques}
     linhas = []
     for estacao in estacoes:
-        relacionados = relacionados_por_estacao.get(estacao["id"], [])
-        incluidos = [
-            item
-            for item in relacionados
-            if item["incluido_no_resumo"] and item.get("estacao_id_fim") == estacao["id"]
-        ]
-        lacunas = [
-            item
-            for item in relacionados
-            if "lacuna" in set(item.get("flags") or ())
-            and item.get("fim") is not None
-            and fim_em_janelas(item["fim"], janelas)
-        ]
-        excluidos = [
-            item
-            for item in relacionados
-            if item.get("estacao_id_fim") == estacao["id"]
-            and item.get("comparavel")
-            and not item["incluido_no_resumo"]
-            and item.get("fim") is not None
-            and fim_em_janelas(item["fim"], janelas)
-        ]
-        segundos = segundos_cobertos(
-            [(item["inicio"], item["fim"]) for item in incluidos],
-            janelas,
-        )
+        agregado = agregados.get(estacao["id"], AGREGADO_VAZIO)
+        segundos = agregado["segundos"]
         horas_validas = segundos / 3600
         cobertura = (100 * segundos / denominador) if denominador else None
-        if incluidos:
-            aumentos = sum(int(item["aumento_observado"]) for item in incluidos)
-            reducoes = sum(int(item["reducao_observada"]) for item in incluidos)
-            movimentacao = sum(int(item["movimentacao_observada"]) for item in incluidos)
+        if agregado["intervalos_validos"]:
+            aumentos = agregado["aumentos"]
+            reducoes = agregado["reducoes"]
+            movimentacao = agregado["movimentacao"]
             taxa = (movimentacao / horas_validas) if horas_validas > 0 else None
         else:
             aumentos = reducoes = movimentacao = taxa = None
-        flags = set()
-        for item in incluidos:
-            flags.update(item.get("flags") or ())
-        for item in relacionados:
-            if "mudanca_cadastral" in set(item.get("flags") or ()):
-                flags.add("mudanca_cadastral")
-        if excluidos:
+        flags = set(agregado["flags"])
+        if agregado["tem_mudanca_cadastral"]:
+            flags.add("mudanca_cadastral")
+        if agregado["tem_excluidos"]:
             flags.add("intervalos_sinalizados_excluidos")
         if estacao.get("ausente_desde"):
             flags.add("desaparecimento")
@@ -252,12 +307,12 @@ def montar_resumo(
             "aumentos_observados": aumentos,
             "reducoes_observadas": reducoes,
             "movimentacao_observada": movimentacao,
-            "intervalos_validos": len(incluidos),
+            "intervalos_validos": agregado["intervalos_validos"],
             "horas_validas": horas_validas,
             "horas_no_filtro": horas_no_filtro,
             "cobertura_percentual": cobertura,
             "taxa_por_hora_valida": taxa,
-            "quantidade_lacunas": len(lacunas),
+            "quantidade_lacunas": agregado["quantidade_lacunas"],
             "flags_qualidade": sorted(flags),
             "bicicletas_disponiveis": bicicletas,
             "ultima_observacao": observado_em,
@@ -265,7 +320,7 @@ def montar_resumo(
         }
         linha["categoria"] = classificar(linha, "movimentacao_observada", limiar_cobertura)
         linhas.append(linha)
-    return linhas, anotados
+    return linhas
 
 
 def classificar(linha: dict, indicador: str, limiar_cobertura: float) -> str:

@@ -21,6 +21,7 @@ from observador_bikerio.banco import (
     leitura,
     periodo_armazenado,
     periodo_da_coleta,
+    resumo_intervalos_por_estacao,
     snapshots_no_periodo,
     todo_cadastro,
     todos_intervalos,
@@ -31,7 +32,12 @@ from observador_bikerio.banco import (
 )
 from observador_bikerio.configuracao import Configuracao
 from observador_bikerio.cores import aplicar_visual
-from observador_bikerio.indicadores import agregar_temporal, construir_janelas, montar_resumo
+from observador_bikerio.indicadores import (
+    agregar_temporal,
+    construir_janelas,
+    montar_resumo,
+    resumir_estacoes,
+)
 from observador_bikerio.tempo import (
     FUSO_EXIBICAO,
     agora_utc,
@@ -40,6 +46,7 @@ from observador_bikerio.tempo import (
     formatar_utc,
     para_grafico,
 )
+from observador_bikerio.textos import FLAGS_SINALIZADOS
 
 COLUNAS_RESUMO = [
     "station_id",
@@ -195,6 +202,14 @@ def consultar(
     if not configuracao.caminho_banco.is_file():
         vazio.mensagem = "Ainda não há base local. A interface só lê o banco; ela não inicia o coletor."
         return vazio
+    janelas = construir_janelas(
+        filtro.inicio.astimezone(FUSO_EXIBICAO),
+        filtro.fim.astimezone(FUSO_EXIBICAO),
+        filtro.horas,
+        filtro.dias_semana,
+    )
+    # A agregação em SQL cobre uma janela contínua; filtros de hora ou dia e a exportação usam os intervalos um a um.
+    agregar_no_banco = not com_exportacao and len(janelas) == 1
     with conectar(configuracao.caminho_banco) as conexao:
         inicializar(conexao)
         with leitura(conexao):
@@ -207,9 +222,21 @@ def consultar(
             brutos_estacoes = estacoes_no_periodo(
                 conexao, fonte["id"], inicio_txt, fim_txt, filtro.station_ids
             )
-            brutos_intervalos = intervalos_sobrepostos(
-                conexao, fonte["id"], inicio_txt, fim_txt, filtro.station_ids
-            )
+            if agregar_no_banco:
+                brutos_agregados = resumo_intervalos_por_estacao(
+                    conexao,
+                    fonte["id"],
+                    inicio_txt,
+                    fim_txt,
+                    excluir_sinalizados=filtro.excluir_sinalizados,
+                    flags_sinalizados=FLAGS_SINALIZADOS,
+                    station_ids=filtro.station_ids,
+                )
+                brutos_intervalos = []
+            else:
+                brutos_intervalos = intervalos_sobrepostos(
+                    conexao, fonte["id"], inicio_txt, fim_txt, filtro.station_ids
+                )
             brutos_estoques = ultimos_estoques_no_periodo(
                 conexao, fonte["id"], inicio_txt, fim_txt, filtro.station_ids
             )
@@ -226,25 +253,30 @@ def consultar(
         vazio = _vazio(filtro, fonte)
         vazio.mensagem = "O fim do período é anterior ao início."
         return vazio
-    janelas = construir_janelas(
-        filtro.inicio.astimezone(FUSO_EXIBICAO),
-        filtro.fim.astimezone(FUSO_EXIBICAO),
-        filtro.horas,
-        filtro.dias_semana,
-    )
     estacoes = [_estacao(item) for item in brutos_estacoes]
-    intervalos = [_intervalo(item) for item in brutos_intervalos]
     estoques = [_estoque(item) for item in brutos_estoques]
-    linhas, anotados = montar_resumo(
-        estacoes,
-        intervalos,
-        estoques,
-        janelas,
-        excluir_sinalizados=filtro.excluir_sinalizados,
-        limiar_cobertura=limiar,
-        limite_desatualizado_segundos=configuracao.limite_status_desatualizado_segundos,
-        fim_periodo=filtro.fim,
-    )
+    if agregar_no_banco:
+        linhas = resumir_estacoes(
+            estacoes,
+            {item["estacao_id"]: _agregado(item) for item in brutos_agregados},
+            estoques,
+            janelas,
+            limiar_cobertura=limiar,
+            limite_desatualizado_segundos=configuracao.limite_status_desatualizado_segundos,
+            fim_periodo=filtro.fim,
+        )
+        anotados = []
+    else:
+        linhas, anotados = montar_resumo(
+            estacoes,
+            [_intervalo(item) for item in brutos_intervalos],
+            estoques,
+            janelas,
+            excluir_sinalizados=filtro.excluir_sinalizados,
+            limiar_cobertura=limiar,
+            limite_desatualizado_segundos=configuracao.limite_status_desatualizado_segundos,
+            fim_periodo=filtro.fim,
+        )
     for linha in linhas:
         linha["inicio_periodo_utc"] = formatar_utc(filtro.inicio)
         linha["fim_periodo_utc"] = formatar_utc(filtro.fim)
@@ -500,6 +532,21 @@ def _intervalo(item: dict) -> dict:
         "motivo": item.get("motivo"),
         "flags": set(decodificar_flags(item.get("flags_qualidade"))),
         "flags_qualidade": item.get("flags_qualidade"),
+    }
+
+
+def _agregado(item: dict) -> dict:
+    validos = int(item.get("intervalos_validos") or 0)
+    return {
+        "intervalos_validos": validos,
+        "aumentos": int(item["aumentos"]) if validos else None,
+        "reducoes": int(item["reducoes"]) if validos else None,
+        "movimentacao": int(item["movimentacao"]) if validos else None,
+        "segundos": float(item.get("segundos") or 0.0),
+        "quantidade_lacunas": int(item.get("quantidade_lacunas") or 0),
+        "flags": set(decodificar_flags(item.get("flags"))),
+        "tem_excluidos": bool(item.get("tem_excluidos")),
+        "tem_mudanca_cadastral": bool(item.get("tem_mudanca_cadastral")),
     }
 
 
