@@ -471,6 +471,30 @@ def janela_fixa(
     return inicio, fim_serie
 
 
+def totais_do_periodo(resumo: pd.DataFrame) -> dict:
+    """Totais do período para os cards: estações, bicicletas, retiradas e devoluções.
+
+    As bicicletas somam a última observação de cada estação; se ela mudou de lugar
+    no período, vale só o cadastro observado por último, para não contar duas vezes.
+    """
+    if resumo.empty:
+        return {"estacoes": 0, "bicicletas": None, "retiradas": None, "devolucoes": None}
+    ultimas = resumo.sort_values("ultima_observacao_utc", na_position="first").drop_duplicates(
+        "station_id", keep="last"
+    )
+    return {
+        "estacoes": int(resumo["station_id"].nunique()),
+        "bicicletas": _soma_inteira(ultimas["bicicletas_disponiveis"]),
+        "retiradas": _soma_inteira(resumo["reducoes_observadas"]),
+        "devolucoes": _soma_inteira(resumo["aumentos_observados"]),
+    }
+
+
+def _soma_inteira(valores: pd.Series) -> int | None:
+    total = pd.to_numeric(valores, errors="coerce").sum(min_count=1)
+    return None if pd.isna(total) else int(total)
+
+
 def periodo_padrao(configuracao: Configuracao) -> tuple[datetime, datetime] | None:
     if not configuracao.caminho_banco.is_file():
         return None

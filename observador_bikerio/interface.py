@@ -22,10 +22,11 @@ from observador_bikerio.consulta import (
     janela_fixa,
     ler_painel,
     periodo_padrao,
+    totais_do_periodo,
 )
 from observador_bikerio.exportacao import exportar
 from observador_bikerio.mapa import criar_mapa
-from observador_bikerio.tempo import FUSO_EXIBICAO, analisar_instante, para_exibicao
+from observador_bikerio.tempo import FUSO_EXIBICAO, agora_utc, analisar_instante, para_exibicao
 from observador_bikerio.textos import INDICADORES, NOTA_INDICADORES
 
 COLUNAS_TABELA = {
@@ -45,7 +46,7 @@ COLUNAS_TABELA = {
     "flags_qualidade": "Alertas",
 }
 
-RECORTES = ("Todo o período", "1h", "6h", "24h", "Personalizado")
+RECORTES = ("1h", "6h", "24h", "Personalizado")
 HORAS_RECORTE = {"1h": 1, "6h": 6, "24h": 24}
 
 
@@ -184,31 +185,22 @@ def _barra(configuracao, recorte: str, indicador: str) -> dict:
         st.markdown("---")
         st.header("Filtros")
         livre = recorte == "Personalizado"
-        padrao = periodo_padrao(configuracao)
-        if padrao:
-            inicio_local = para_exibicao(padrao[0])
-            fim_local = para_exibicao(padrao[1])
-        else:
-            from observador_bikerio.tempo import agora_utc
-
-            fim_local = para_exibicao(agora_utc())
-            inicio_local = fim_local.replace(hour=0, minute=0, second=0, microsecond=0)
-        coluna_a, coluna_b = st.columns(2)
-        with coluna_a:
-            data_inicio = st.date_input("Data inicial", value=inicio_local.date(), disabled=not livre)
-            hora_inicio = st.time_input(
-                "Hora inicial",
-                value=inicio_local.replace(microsecond=0).time().replace(tzinfo=None),
-                step=timedelta(seconds=1),
-                disabled=not livre,
-            )
-        with coluna_b:
-            data_fim = st.date_input("Data final", value=fim_local.date(), disabled=not livre)
-            hora_fim = st.time_input(
-                "Hora final",
-                value=fim_local.replace(microsecond=0).time().replace(tzinfo=None),
-                step=timedelta(seconds=1),
-                disabled=not livre,
+        _iniciar_periodo_personalizado(configuracao)
+        # Dentro do formulário, os valores só chegam ao filtro quando o botão é clicado.
+        with st.form("periodo_personalizado", border=False):
+            coluna_a, coluna_b = st.columns(2)
+            with coluna_a:
+                data_inicio = st.date_input("Data inicial", key="data_inicio", disabled=not livre)
+                hora_inicio = st.time_input(
+                    "Hora inicial", key="hora_inicio", step=timedelta(seconds=1), disabled=not livre
+                )
+            with coluna_b:
+                data_fim = st.date_input("Data final", key="data_fim", disabled=not livre)
+                hora_fim = st.time_input(
+                    "Hora final", key="hora_fim", step=timedelta(seconds=1), disabled=not livre
+                )
+            st.form_submit_button(
+                "Aplicar período", type="primary", width="stretch", disabled=not livre
             )
         opcoes = painel.get("opcoes_estacoes") or []
         estacoes = st.multiselect(
@@ -249,6 +241,24 @@ def _barra(configuracao, recorte: str, indicador: str) -> dict:
     }
 
 
+def _iniciar_periodo_personalizado(configuracao) -> None:
+    """Valores iniciais do período personalizado: as últimas 24h de dados, definidos uma vez por sessão."""
+    if "data_inicio" in st.session_state:
+        return
+    padrao = periodo_padrao(configuracao)
+    if padrao:
+        inicio, fim = janela_fixa(padrao[0], padrao[1], 24)
+    else:
+        fim = agora_utc()
+        inicio = fim - timedelta(hours=24)
+    inicio_local = para_exibicao(inicio).replace(microsecond=0)
+    fim_local = para_exibicao(fim).replace(microsecond=0)
+    st.session_state["data_inicio"] = inicio_local.date()
+    st.session_state["hora_inicio"] = inicio_local.time().replace(tzinfo=None)
+    st.session_state["data_fim"] = fim_local.date()
+    st.session_state["hora_fim"] = fim_local.time().replace(tzinfo=None)
+
+
 def _conteudo(configuracao, controles: dict) -> None:
     segundos = int(configuracao.atualizacao_interface_segundos)
 
@@ -279,20 +289,32 @@ def _renderizar(configuracao, controles: dict) -> None:
         return
     _status_principal(painel, filtro)
     st.divider()
+    totais = totais_do_periodo(resultado.resumo)
     colunas = st.columns(4)
-    colunas[0].metric("Estações no mapa", resultado.contagens["estacoes"])
-    colunas[1].metric("Na escala de cor", resultado.contagens["na_escala"])
-    colunas[2].metric("Sem classificação", resultado.contagens["sem_classificacao"])
-    soma = pd.to_numeric(resultado.resumo["movimentacao_observada"], errors="coerce").sum(min_count=1)
+    colunas[0].metric(
+        "Total de estações",
+        totais["estacoes"],
+        help="Estações com cadastro válido no período escolhido.",
+    )
+    colunas[1].metric(
+        "Total de bicicletas",
+        _numero(totais["bicicletas"]),
+        help="Soma das bicicletas disponíveis na última observação de cada estação dentro do período.",
+    )
+    colunas[2].metric(
+        "Retiradas de bicicletas",
+        _numero(totais["retiradas"]),
+        help="Soma das quedas de estoque observadas no período, em todas as estações. Não é o número de viagens.",
+    )
     colunas[3].metric(
-        "Movimentação total",
-        "—" if pd.isna(soma) else f"{soma:.0f}",
-        help="Soma das movimentações observadas. Não é o total de viagens do sistema.",
+        "Devoluções de bicicletas",
+        _numero(totais["devolucoes"]),
+        help="Soma das altas de estoque observadas no período, em todas as estações. Não é o número de viagens.",
     )
     indicador = controles["indicador"]
     if (
         resultado.contagens["na_escala"] == 0
-        and not pd.isna(soma)
+        and totais["retiradas"] is not None
         and INDICADORES[indicador]["aplica_cobertura"]
     ):
         st.caption("Nenhuma estação atingiu cobertura ≥ 90% na janela. Os valores continuam na tabela.")
@@ -358,10 +380,8 @@ def _montar_filtro(configuracao, controles: dict):
         ).astimezone(timezone.utc)
     elif padrao is None:
         return None, None
-    elif recorte in HORAS_RECORTE:
-        inicio, fim = janela_fixa(padrao[0], padrao[1], HORAS_RECORTE[recorte])
     else:
-        inicio, fim = padrao
+        inicio, fim = janela_fixa(padrao[0], padrao[1], HORAS_RECORTE[recorte])
     if fim < inicio:
         return None, "A data final precisa ser igual ou posterior à inicial."
     return (
@@ -475,6 +495,10 @@ def _hora(valor) -> str:
     if instante is None:
         return "—"
     return para_exibicao(instante).strftime("%d/%m/%Y %H:%M:%S")
+
+
+def _numero(valor: int | None) -> str:
+    return "—" if valor is None else f"{valor:,}".replace(",", ".")
 
 
 def _rotulo_estacao(opcoes: list[dict], station_id: str) -> str:

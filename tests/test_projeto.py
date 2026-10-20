@@ -12,7 +12,8 @@ def test_interface_nao_dispara_coleta():
     assert "coletar_uma_vez" not in texto
     assert "coletar_continuo" not in texto
     assert "ClienteGbfs" not in texto
-    assert "Movimentação total" in texto
+    assert "Retiradas de bicicletas" in texto
+    assert "Devoluções de bicicletas" in texto
     assert "NOTA_INDICADORES" in texto
 
 

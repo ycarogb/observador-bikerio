@@ -15,7 +15,7 @@ import pytest
 
 from observador_bikerio.backup import gerar_backup
 from observador_bikerio.banco import conectar, consultar_sql
-from observador_bikerio.consulta import FiltroConsulta, consultar
+from observador_bikerio.consulta import FiltroConsulta, consultar, totais_do_periodo
 from observador_bikerio.coletor import coletar_uma_vez, espera_ate_proximo
 from observador_bikerio.exportacao import exportar
 from observador_bikerio.fonte_gbfs import ClienteGbfs, ErroFonte, descobrir_feeds
@@ -247,6 +247,12 @@ def test_cenario_de_qualidade_exercita_lacuna_intervencao_e_mudanca(tmp_path):
         for linha in resumo.itertuples()
     }
     assert estoques == {("A", -22.90): 18, ("B", -22.91): 4, ("B", -22.95): 7, ("C", -22.92): 11}
+    assert totais_do_periodo(resumo) == {
+        "estacoes": 3,
+        "bicicletas": 18 + 7 + 11,
+        "retiradas": 6 + 2 + 1,
+        "devolucoes": 3 + 16 + 1 + 2,
+    }
 
     filtro.excluir_sinalizados = True
     sem_sinalizados = consultar(config, filtro, com_exportacao=False).resumo

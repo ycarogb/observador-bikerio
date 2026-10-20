@@ -13,7 +13,8 @@ O coletor consulta o feed público [GBFS 3.0](https://gbfs.org/documentation/ref
 - **Coleta** a disponibilidade de bicicletas via feed GBFS, a cada 60 segundos, gravando um snapshot por ciclo.
 - **Calcula** retiradas observadas, devoluções observadas e movimentação total entre snapshots consecutivos.
 - **Exibe** um mapa com uma estação por marcador, com cor proporcional ao indicador selecionado.
-- **Filtra** por janela de tempo: 1 h, 6 h, 24 h, todo o período ou intervalo personalizado.
+- **Filtra** por janela de tempo: 1 h, 6 h, 24 h ou intervalo personalizado, aplicado pelo botão **Aplicar período**.
+- **Resume** o período em quatro números: estações, bicicletas disponíveis na última observação, retiradas e devoluções.
 - **Exporta** o recorte atual para CSV, Parquet, GeoPackage e GeoJSON.
 
 O coletor é um processo independente da interface. Abrir ou fechar o mapa não inicia nem encerra a coleta.
